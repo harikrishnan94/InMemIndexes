@@ -16,4 +16,6 @@ set(MAIN_SRC
 set(TEST_SRC
   # "${TEST_SRC_PATH}/*.cpp"
   "${TEST_SRC_PATH}/test_btree.cpp"
+  "${TEST_SRC_PATH}/testBase.cpp"
+  "${TEST_SRC_PATH}/sha512.cpp"
 )
