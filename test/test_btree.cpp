@@ -5,6 +5,7 @@
 #include <iostream>
 #include <unordered_map>
 
+
 TEST_CASE("BtreeBasicTest", "[bwtree]")
 {
 	auto key_size = [](const void *key, void *extra_arg)
@@ -30,8 +31,8 @@ TEST_CASE("BtreeBasicTest", "[bwtree]")
 
 	btree_key_val_info_t kv_info = { compare_key, delete_node, key_size, NULL };
 
-	int		btree_pagesize = 8 * 1024;
-	long	num_keys	   = 1 * 1024 * 1024;
+	int		btree_pagesize = 8192;
+	long	num_keys	   = 1024 * 1024;
 	btree_t btree		   = btree_create(btree_pagesize, &kv_info);
 	long	key;
 
@@ -45,16 +46,12 @@ TEST_CASE("BtreeBasicTest", "[bwtree]")
 		key_values[key] = i;
 	}
 
-	std::cout << "BTree height = " << btree_height(btree) << '\n';
-
 	for (const auto &kv: key_values)
 	{
 		void *val;
-		long long_val;
 
-		REQUIRE(btree_find(btree, &kv.first, &val) == true);
-		long_val = reinterpret_cast<long>(val);
-		REQUIRE(long_val == kv.second);
+		REQUIRE(btree_delete(btree, &kv.first, &val) == true);
+		REQUIRE(reinterpret_cast<long>(val) == kv.second);
 	}
 }
 
@@ -97,15 +94,11 @@ TEST_CASE("BtreeTestString", "[btree]")
 		key_values[output] = i;
 	}
 
-	std::cout << "BTree height = " << btree_height(btree) << '\n';
-
 	for (const auto &kv: key_values)
 	{
 		void *val;
-		long long_val;
 
-		REQUIRE(btree_find(btree, kv.first, &val) == true);
-		long_val = reinterpret_cast<long>(val);
-		REQUIRE(long_val == kv.second);
+		REQUIRE(btree_delete(btree, kv.first, &val) == true);
+		REQUIRE(reinterpret_cast<long>(val) == kv.second);
 	}
 }

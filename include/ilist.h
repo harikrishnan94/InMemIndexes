@@ -359,9 +359,7 @@ static inline void
 dlist_push_head(dlist_head *head, dlist_node *node)
 {
 	if (head->head.next == NULL) /* convert NULL header to circular */
-	{
 		dlist_init(head);
-	}
 
 	node->next		 = head->head.next;
 	node->prev		 = &head->head;
@@ -379,9 +377,7 @@ static inline void
 dlist_push_tail(dlist_head *head, dlist_node *node)
 {
 	if (head->head.next == NULL) /* convert NULL header to circular */
-	{
 		dlist_init(head);
-	}
 
 	node->next		 = &head->head;
 	node->prev		 = head->head.prev;
@@ -455,9 +451,7 @@ dlist_move_head(dlist_head *head, dlist_node *node)
 {
 	/* fast path if it's already at the head */
 	if (head->head.next == node)
-	{
 		return;
-	}
 
 	dlist_delete(node);
 	dlist_push_head(head, node);

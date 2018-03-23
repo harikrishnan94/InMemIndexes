@@ -9,11 +9,16 @@
 #define MIN_PAGE_SIZE 64
 #define MAX_PAGE_SIZE (8 * 1024)
 
+#define Max(a, b) ((a) > (b) ? (a) : (b))
+#define Min(a, b) ((a) < (b) ? (a) : (b))
+
 #define CMP(a, b)	 (btree->kv_info->cmp_key(a, b, btree->kv_info->extra_arg))
 #define KEYSIZE(key) (key == NULL ? 0 : btree->kv_info->key_size(key, btree->kv_info->extra_arg))
 
 struct btree_page_t;
 
+typedef int16_t				page_off_t;
+typedef int					page_slot_t;
 typedef struct btree_page_t btree_page_t;
 
 struct btree_data_t
@@ -25,8 +30,8 @@ struct btree_data_t
 
 typedef struct
 {
-	int key_present : 1;
-	int slot		: sizeof(int16_t) * 8;
+	int			key_present : 1;
+	page_slot_t slot		: sizeof(page_off_t) * 8;
 } bsearch_result_t;
 
 typedef struct
@@ -41,33 +46,46 @@ typedef struct
 
 struct btree_page_t
 {
-	bool is_leaf;
-	int	 rem_page_size;
-	int	 height;
-	int	 num_keys;
+	int height;
+	int rem_page_size;
+	int num_keys;
+	int logical_pagesize;
 
 	btree_page_t *rightlink;
 
-	int		page_data_start_offset;
-	int16_t max_key_offset;
-	int16_t offsetArray[];
+	page_off_t page_data_start_offset;
+	page_off_t offsetArray[];
 };
 
+#define PageIsLeaf(page)  ((page)->height == 0)
+#define PageIsInner(page) ((page)->height > 0)
+
+#ifdef ENABLE_CHECK_BTREE_INTEGRITY
+
+static bool check_btree_integrity(btree_t btree);
 static bool check_page_integrity(btree_t btree, btree_page_t *page, const void *prev_key);
 static bool check_level_integrity(btree_t btree, btree_page_t *page);
+static bool check_level_reacheablity(btree_page_t *page);
+
+#endif
+
+#ifdef ENABLE_BTREE_DUMP
+
 static void dump_btree(btree_t btree);
 static void dump_btree_level(btree_page_t *page);
 static void dump_btree_page(btree_page_t *page);
 
+#endif
+
 static inline btree_page_t **
-PageGetPtrToDownLinkAtSlot(btree_page_t *page, int slot)
+PageGetPtrToDownLinkAtSlot(btree_page_t *page, page_slot_t slot)
 {
 	return &((btree_page_item_t *) ((char *) page + page->offsetArray[slot]))->downlink;
 }
 
 
 static inline void **
-PageGetValuesAtSlot(btree_page_t *page, int slot)
+PageGetValuesAtSlot(btree_page_t *page, page_slot_t slot)
 {
 	return &((btree_page_item_t *) ((char *) page + page->offsetArray[slot]))->value;
 }
@@ -81,20 +99,13 @@ PageGetKeyAtOffset(btree_page_t *page, int offset)
 
 
 static inline void *
-PageGetKeyAtSlot(btree_page_t *page, int slot)
+PageGetKeyAtSlot(btree_page_t *page, page_slot_t slot)
 {
-	if (slot == 0)
-	{
-		return NULL;
-	}
-	else
-	{
-		return PageGetKeyAtOffset(page, page->offsetArray[slot]);
-	}
+	return slot == 0 ? NULL : PageGetKeyAtOffset(page, page->offsetArray[slot]);
 }
 
 
-#define GetPrevSlot(res) ((res).key_present ? (res).slot : (res).slot - 1)
+#define GetPrevSlot(res) ((res).slot - 1)
 
 typedef struct
 {
@@ -115,9 +126,7 @@ btree_create(int pagesize, btree_key_val_info_t *kv_info)
 	btree = malloc(sizeof(struct btree_data_t));
 
 	if (pagesize < MIN_PAGE_SIZE || pagesize > MAX_PAGE_SIZE)
-	{
 		return NULL;
-	}
 
 	btree->kv_info	= kv_info;
 	btree->pagesize = pagesize;
@@ -180,8 +189,8 @@ destroy_stack(slist_head *stack)
 static bsearch_result_t
 bsearch_page(btree_t btree, btree_page_t *page, const void *scan_key)
 {
-	int				 low, mid, high, result;
-	int16_t			 *offsetArray = page->offsetArray;
+	page_slot_t		 low, mid, high, result;
+	page_off_t		 *offsetArray = page->offsetArray;
 	bsearch_result_t res;
 
 	low	   = 0;
@@ -194,17 +203,11 @@ bsearch_page(btree_t btree, btree_page_t *page, const void *scan_key)
 		result = mid == 0 ? 1 : CMP(scan_key, PageGetKeyAtSlot(page, mid));
 
 		if (result == 0)
-		{
 			break;
-		}
 		else if (result < 0)
-		{
 			high = mid - 1;
-		}
 		else
-		{
 			low = mid + 1;
-		}
 	}
 
 	res.key_present = result == 0;
@@ -215,16 +218,16 @@ bsearch_page(btree_t btree, btree_page_t *page, const void *scan_key)
 
 
 static btree_page_t *
-new_page(btree_t btree, bool is_leaf, int height)
+new_page(btree_t btree, int height)
 {
 	btree_page_t *page = malloc(btree->pagesize);
 
 	memset(page, 0, sizeof(btree_page_t));
 
-	page->is_leaf				 = is_leaf;
 	page->rem_page_size			 = btree->pagesize - sizeof(btree_page_t);
 	page->page_data_start_offset = btree->pagesize;
 	page->height				 = height;
+	page->logical_pagesize		 = sizeof(btree_page_t);
 
 	return page;
 }
@@ -235,12 +238,9 @@ does_item_fit_into_page(btree_t btree, btree_page_t *page, const void *key, bool
 {
 	int key_size  = KEYSIZE(key);
 	int elem_size = isKeyPresent ? 0 : (MAXALIGN(key_size) + sizeof(btree_page_item_t) +
-										sizeof(int16_t));
+										sizeof(page_off_t));
 
-	if (!page->is_leaf)
-	{
-		assert(isKeyPresent == false);
-	}
+	assert(PageIsInner(page) ? isKeyPresent == false : true);
 
 	return page->rem_page_size >= elem_size;
 }
@@ -260,14 +260,12 @@ duplicate_key(btree_t btree, const void *key)
 
 static void
 add_to_page(btree_t btree, btree_page_t *page, const void *key, const void *val,
-			int slot, bool isKeyPresent)
+			page_slot_t slot, bool isKeyPresent)
 {
-	int16_t *offsetArray   = page->offsetArray;
-	int		key_size	   = KEYSIZE(key);
-	int		key_value_size = MAXALIGN(key_size) + sizeof(btree_page_item_t);
-	int		elem_size	   = isKeyPresent ? 0 : (key_value_size + sizeof(int16_t));
-	bool	isMaxKey	   = false;
-	int		keyOffset;
+	page_off_t *offsetArray	  = page->offsetArray;
+	int		   key_size		  = KEYSIZE(key);
+	int		   key_value_size = MAXALIGN(key_size) + sizeof(btree_page_item_t);
+	int		   elem_size	  = isKeyPresent ? 0 : (key_value_size + sizeof(page_off_t));
 
 	assert(slot <= page->num_keys);
 	assert(does_item_fit_into_page(btree, page, key, isKeyPresent));
@@ -277,30 +275,24 @@ add_to_page(btree_t btree, btree_page_t *page, const void *key, const void *val,
 		if (!isKeyPresent)
 		{
 			memmove(offsetArray + slot + 1, offsetArray + slot, (page->num_keys - slot) *
-					sizeof(int16_t));
+					sizeof(page_off_t));
 		}
-	}
-	else
-	{
-		isMaxKey = true;
 	}
 
 	if (!isKeyPresent)
 	{
 		page->num_keys++;
 		page->rem_page_size			 -= elem_size;
+		page->logical_pagesize		 += elem_size;
 		page->page_data_start_offset -= key_value_size;
-		keyOffset					  = page->page_data_start_offset;
-		page->offsetArray[slot]		  = keyOffset;
-	}
-	else
-	{
-		assert(slot < page->num_keys);
-		assert(page->is_leaf);
-		keyOffset = page->offsetArray[slot];
+		page->offsetArray[slot]		  = page->page_data_start_offset;
 	}
 
-	assert(key == NULL ? (slot == 0 && (page->is_leaf ? val == NULL : true)) : true);
+	assert(page->page_data_start_offset > sizeof(btree_page_t));
+	assert(isKeyPresent ? slot < page->num_keys : true);
+	assert(isKeyPresent ? PageIsLeaf(page) : true);
+	assert(key == NULL ? (slot == 0 && (PageIsLeaf(page) ? val == NULL : true)) : true);
+
 	*PageGetValuesAtSlot(page, slot) = (void *) val;
 
 	if (!isKeyPresent && key)
@@ -309,11 +301,50 @@ add_to_page(btree_t btree, btree_page_t *page, const void *key, const void *val,
 
 		memcpy(page_key, key, key_size);
 	}
+}
 
-	if (isMaxKey && key)
+
+static void
+delete_from_page(btree_t btree, btree_page_t *page, page_slot_t slot)
+{
+	page_off_t *offsetArray;
+	int		   key_size;
+	int		   key_value_size;
+	int		   elem_size;
+
+	assert(slot > 0 && slot < page->num_keys);
+
+	offsetArray	   = page->offsetArray;
+	key_size	   = KEYSIZE(PageGetKeyAtSlot(page, slot));
+	key_value_size = MAXALIGN(key_size) + sizeof(btree_page_item_t);
+	elem_size	   = key_value_size + sizeof(page_off_t);
+
+	if (slot != page->num_keys - 1)
 	{
-		page->max_key_offset = page->offsetArray[slot];
+		memmove(offsetArray + slot, offsetArray + slot + 1,
+				(page->num_keys - slot - 1) * sizeof(page_off_t));
 	}
+
+	page->logical_pagesize -= elem_size;
+	page->num_keys--;
+}
+
+
+static bool
+is_page_under_filled(btree_t btree, btree_page_t *page)
+{
+	return page->logical_pagesize < btree->pagesize / 2;
+}
+
+
+static bool
+can_merge_pages(btree_t btree, btree_page_t *page1, btree_page_t *page2)
+{
+	if (page1->num_keys == 1 || page2->num_keys == 1)
+		return true;
+
+	return (page1->logical_pagesize + page2->logical_pagesize - sizeof(btree_page_t)) <=
+		   btree->pagesize;
 }
 
 
@@ -333,21 +364,23 @@ struct page_split_state_t
 	btree_page_t *right_page;
 	void		 *key;
 	void		 *value;
-	int			 split_slot;
-	int			 insert_key_slot;
+	page_slot_t	 split_slot;
+	page_slot_t	 insert_key_slot;
 
 	btree_page_t *insert_page;
-	int			 next_insert_slot;
+	page_slot_t	 next_insert_slot;
 
 	void *split_key;
 };
 
 static void
-add_to_split_page(btree_t btree, struct page_split_state_t *split_state, int slot)
+add_to_split_page(btree_t btree, struct page_split_state_t *split_state, page_slot_t slot)
 {
 	const void *key;
 	const void *value;
 	bool	   insert_key_processed = false;
+	bool	   is_split_point		= false;
+	bool	   skip_insert			= false;
 
 	if (slot == split_state->insert_key_slot)
 	{
@@ -364,41 +397,47 @@ add_to_split_page(btree_t btree, struct page_split_state_t *split_state, int slo
 
 	if (split_state->next_insert_slot == split_state->split_slot)
 	{
-		split_state->split_key	 = duplicate_key(btree, key);
-		split_state->insert_page = split_state->right_page;
-		split_state->split_slot	 = -1;
+		split_state->split_key	= duplicate_key(btree, key);
+		split_state->split_slot = -1;
+		is_split_point			= true;
 
-		if (split_state->page_to_split->is_leaf)
+		if (PageIsInner(split_state->page_to_split))
 		{
-			add_to_page(btree, split_state->insert_page, NULL, NULL, 0, false);
+			split_state->insert_page	  = split_state->right_page;
 			split_state->next_insert_slot = 1;
-		}
-		else
-		{
-			split_state->next_insert_slot = 0;
 			key							  = NULL;
+			skip_insert					  = true;
+
+			add_to_page(btree, split_state->insert_page, NULL, value, 0, false);
 		}
 	}
 
-	add_to_page(btree, split_state->insert_page, key, value, split_state->next_insert_slot, false);
-	split_state->next_insert_slot++;
+	if (!skip_insert)
+	{
+		add_to_page(btree, split_state->insert_page, key, value,
+					split_state->next_insert_slot, false);
+		split_state->next_insert_slot++;
+	}
+
+	if (is_split_point && PageIsLeaf(split_state->page_to_split))
+	{
+		split_state->insert_page	  = split_state->right_page;
+		split_state->next_insert_slot = 1;
+		add_to_page(btree, split_state->insert_page, NULL, NULL, 0, false);
+	}
 
 	if (insert_key_processed)
-	{
 		add_to_split_page(btree, split_state, slot);
-	}
 }
 
 
 static void *
 split_page(btree_t btree, btree_page_t *page_to_split, const void *key, const void *value,
-		   int insert_key_slot, btree_page_t **right_page_ptr)
+		   page_slot_t insert_key_slot, btree_page_t **right_page_ptr)
 {
-	btree_page_t *left_page = new_page(btree, page_to_split->is_leaf,
-									   page_to_split->height);
-	btree_page_t *right_page = new_page(btree, page_to_split->is_leaf,
-										page_to_split->height);
-	int						  num_keys = page_to_split->num_keys;
+	btree_page_t			  *left_page  = new_page(btree, page_to_split->height);
+	btree_page_t			  *right_page = new_page(btree, page_to_split->height);
+	int						  num_keys	  = page_to_split->num_keys;
 	struct page_split_state_t split_state;
 
 	memset(&split_state, 0, sizeof(split_state));
@@ -411,15 +450,13 @@ split_page(btree_t btree, btree_page_t *page_to_split, const void *key, const vo
 	split_state.split_slot		= (num_keys + 1) / 2;
 	split_state.insert_key_slot = insert_key_slot;
 
-	for (int slot = 0; slot < num_keys; slot++)
+	for (page_slot_t slot = 0; slot < num_keys; slot++)
 	{
 		add_to_split_page(btree, &split_state, slot);
 	}
 
 	if (split_state.insert_key_slot == num_keys)
-	{
 		add_to_page(btree, right_page, key, value, right_page->num_keys, false);
-	}
 
 	left_page->rightlink  = right_page;
 	right_page->rightlink = page_to_split->rightlink;
@@ -452,15 +489,13 @@ split_page_and_insert(btree_t btree, slist_head *stack, const void *key, void *v
 		left_page = page_to_split;
 
 		if (free_insert_key)
-		{
 			free((void *) key);
-		}
 
 		pop_from_stack(stack, &page_to_split, &search_res);
 
 		if (page_to_split == NULL)
 		{
-			btree_page_t *root = new_page(btree, false, right_page->height + 1);
+			btree_page_t *root = new_page(btree, right_page->height + 1);
 
 			add_to_page(btree, root, NULL, left_page, 0, false);
 			add_to_page(btree, root, split_key, right_page, 1, false);
@@ -490,6 +525,147 @@ split_page_and_insert(btree_t btree, slist_head *stack, const void *key, void *v
 
 
 static void
+adjust_root(btree_t btree)
+{
+	btree_page_t *oldroot = btree->root;
+
+	if (PageIsInner(oldroot))
+	{
+		btree->root = *PageGetPtrToDownLinkAtSlot(oldroot, 0);
+		free(oldroot);
+	}
+}
+
+
+static int
+choose_merge_page(btree_t btree, btree_page_t *parent_page, page_slot_t slot)
+{
+	btree_page_t *current_page = *PageGetPtrToDownLinkAtSlot(parent_page, slot);
+	page_slot_t	 sibiling_page_slot;
+
+	if (slot != 0)
+	{
+		sibiling_page_slot = slot - 1;
+
+		if (can_merge_pages(btree, current_page,
+							*PageGetPtrToDownLinkAtSlot(parent_page, sibiling_page_slot)))
+		{
+			return sibiling_page_slot;
+		}
+
+		sibiling_page_slot = slot + 1;
+
+		if (sibiling_page_slot < parent_page->num_keys &&
+			can_merge_pages(btree, current_page,
+							*PageGetPtrToDownLinkAtSlot(parent_page, sibiling_page_slot)))
+		{
+			return sibiling_page_slot;
+		}
+	}
+	else
+	{
+		sibiling_page_slot = slot + 1;
+
+		if (sibiling_page_slot < parent_page->num_keys &&
+			can_merge_pages(btree, current_page,
+							*PageGetPtrToDownLinkAtSlot(parent_page, sibiling_page_slot)))
+		{
+			return sibiling_page_slot;
+		}
+	}
+
+	return -1;
+}
+
+
+static bool
+add_all_keys_to_page(btree_t btree, btree_page_t *dst_page,
+					 btree_page_t *src_page, const void *insert_key)
+{
+	for (page_slot_t i = 0; i < src_page->num_keys; i++)
+	{
+		const void *key	  = i == 0 && insert_key ? insert_key : PageGetKeyAtSlot(src_page, i);
+		const void *value = *PageGetValuesAtSlot(src_page, i);
+
+		if (key || dst_page->num_keys == 0)
+		{
+			if (!does_item_fit_into_page(btree, dst_page, key, false))
+				return false;
+
+			add_to_page(btree, dst_page, key, value, dst_page->num_keys, false);
+		}
+	}
+
+	return true;
+}
+
+
+static bool
+merge_pages(btree_t btree, btree_page_t *parent_page,
+			page_slot_t page1_slot, page_slot_t page2_slot, void *insert_key)
+{
+	btree_page_t *left_page		  = *PageGetPtrToDownLinkAtSlot(parent_page, page1_slot);
+	btree_page_t *right_page	  = *PageGetPtrToDownLinkAtSlot(parent_page, page2_slot);
+	btree_page_t *merged_page	  = new_page(btree, left_page->height);
+	bool		 merge_successful = false;
+
+	if (add_all_keys_to_page(btree, merged_page, left_page, NULL))
+	{
+		if (add_all_keys_to_page(btree, merged_page, right_page, insert_key))
+		{
+			merged_page->rightlink = right_page->rightlink;
+			merge_successful	   = true;
+
+			memcpy(left_page, merged_page, btree->pagesize);
+			free(right_page);
+		}
+	}
+
+	free(merged_page);
+
+	return merge_successful;
+}
+
+
+static void
+merge_with_adjacent_page(btree_t btree, slist_head *stack)
+{
+	btree_page_t	 *parent_page;
+	bsearch_result_t search_res;
+	bool			 is_leaf = true;
+
+	do
+	{
+		int	 left_page_slot, right_page_slot, sibiling_slot, slot;
+		void *right_page_index_key;
+
+		pop_from_stack(stack, &parent_page, &search_res);
+
+		slot = GetPrevSlot(search_res);
+
+		if (parent_page == NULL)
+			break;
+
+		sibiling_slot	= choose_merge_page(btree, parent_page, slot);
+		left_page_slot	= Min(slot, sibiling_slot);
+		right_page_slot = Max(slot, sibiling_slot);
+
+		if (sibiling_slot == -1)
+			break;
+
+		right_page_index_key = is_leaf ? NULL : PageGetKeyAtSlot(parent_page, right_page_slot);
+		is_leaf				 = false;
+
+		if (merge_pages(btree, parent_page, left_page_slot, right_page_slot, right_page_index_key))
+			delete_from_page(btree, parent_page, right_page_slot);
+	} while (is_page_under_filled(btree, parent_page));
+
+	if (btree->root->num_keys == 1)
+		adjust_root(btree);
+}
+
+
+static void
 btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **leaf_page,
 			 bsearch_result_t *last_search_res)
 {
@@ -508,7 +684,7 @@ btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **l
 
 			push_to_stack(stack, page, search_res);
 
-			if (page->is_leaf)
+			if (PageIsLeaf(page))
 			{
 				*leaf_page		 = page;
 				*last_search_res = search_res;
@@ -538,7 +714,7 @@ btree_insert(btree_t btree, const void *key, const void *value)
 
 	if (btree->root == NULL)
 	{
-		btree->root = new_page(btree, true, 0);
+		btree->root = new_page(btree, 0);
 		add_to_page(btree, btree->root, NULL, NULL, 0, false);
 	}
 
@@ -547,20 +723,16 @@ btree_insert(btree_t btree, const void *key, const void *value)
 	if (!search_res.key_present)
 	{
 		if (does_item_fit_into_page(btree, leaf_page, key, search_res.key_present))
-		{
 			add_to_page(btree, leaf_page, key, value, search_res.slot, search_res.key_present);
-		}
 		else
-		{
 			split_page_and_insert(btree, &stack, key, (void *) value);
-		}
 	}
 	else
 	{
 		add_to_page(btree, leaf_page, key, value, search_res.slot, search_res.key_present);
 	}
 
-#ifdef CHECK_BTREE_INTEGRITY
+#ifdef ENABLE_CHECK_BTREE_INTEGRITY
 	if (!check_btree_integrity(btree))
 	{
 		assert(false);
@@ -577,7 +749,35 @@ btree_insert(btree_t btree, const void *key, const void *value)
 bool
 btree_delete(btree_t btree, const void *key, void **value)
 {
-	return false;
+	btree_page_t	 *leaf_page;
+	slist_head		 stack;
+	bsearch_result_t search_res;
+
+	btree_search(btree, key, &stack, &leaf_page, &search_res);
+
+	if (search_res.key_present)
+	{
+		*value = *PageGetValuesAtSlot(leaf_page, search_res.slot);
+		delete_from_page(btree, leaf_page, search_res.slot);
+
+		if (is_page_under_filled(btree, leaf_page))
+		{
+			pop_from_stack(&stack, &leaf_page, &search_res);
+			merge_with_adjacent_page(btree, &stack);
+		}
+	}
+
+#ifdef ENABLE_CHECK_BTREE_INTEGRITY
+	if (!check_btree_integrity(btree))
+	{
+		assert(false);
+		abort();
+	}
+#endif
+
+	destroy_stack(&stack);
+
+	return search_res.key_present;
 }
 
 
@@ -591,9 +791,7 @@ btree_find(btree_t btree, const void *key, void **value)
 	btree_search(btree, key, &stack, &leaf_page, &search_res);
 
 	if (search_res.key_present)
-	{
 		*value = *PageGetValuesAtSlot(leaf_page, search_res.slot);
-	}
 
 	destroy_stack(&stack);
 
@@ -604,28 +802,29 @@ btree_find(btree_t btree, const void *key, void **value)
 int
 btree_height(btree_t btree)
 {
-	return btree->root ? btree->root->height : -1;
+	return btree->root ? btree->root->height + 1 : -1;
 }
 
 
-bool
+#ifdef ENABLE_CHECK_BTREE_INTEGRITY
+
+static bool
 check_btree_integrity(btree_t btree)
 {
 	btree_page_t *page = btree->root;
 
+	if (page && !check_level_reacheablity(page))
+		return false;
+
 	while (page != NULL)
 	{
 		if (!check_level_integrity(btree, page))
-		{
 			return false;
-		}
 
-		if (!page->is_leaf && *PageGetPtrToDownLinkAtSlot(page, 0) == NULL)
-		{
+		if (PageIsInner(page) && *PageGetPtrToDownLinkAtSlot(page, 0) == NULL)
 			return false;
-		}
 
-		page = page->is_leaf ? NULL : *PageGetPtrToDownLinkAtSlot(page, 0);
+		page = PageIsLeaf(page) ? NULL : *PageGetPtrToDownLinkAtSlot(page, 0);
 	}
 
 	return true;
@@ -642,22 +841,18 @@ check_level_integrity(btree_t btree, btree_page_t *page)
 	if (page)
 	{
 		height	= page->height;
-		is_leaf = page->is_leaf;
+		is_leaf = PageIsLeaf(page);
 	}
 
 	while (page != NULL)
 	{
 		if (!check_page_integrity(btree, page, prev_key))
-		{
 			return false;
-		}
 
-		if (height != page->height || is_leaf != page->is_leaf)
-		{
+		if (height != page->height || is_leaf != PageIsLeaf(page))
 			return false;
-		}
 
-		prev_key = PageGetKeyAtOffset(page, page->max_key_offset);
+		prev_key = PageGetKeyAtSlot(page, page->num_keys - 1);
 		page	 = page->rightlink;
 	}
 
@@ -668,17 +863,13 @@ check_level_integrity(btree_t btree, btree_page_t *page)
 static bool
 check_page_integrity(btree_t btree, btree_page_t *page, const void *prev_key)
 {
-	int slot;
+	page_slot_t slot;
 
 	if (page == NULL || page->num_keys == 0)
-	{
 		return true;
-	}
 
-	if ((page->is_leaf && page->height != 0) || (!page->is_leaf && page->height == 0))
-	{
+	if ((PageIsLeaf(page) && page->height != 0) || (PageIsInner(page) && page->height == 0))
 		return false;
-	}
 
 	slot	 = prev_key == NULL ? 2 : 1;
 	prev_key = prev_key == NULL ? PageGetKeyAtSlot(page, 1) : prev_key;
@@ -688,22 +879,60 @@ check_page_integrity(btree_t btree, btree_page_t *page, const void *prev_key)
 		const void *cur_key = PageGetKeyAtSlot(page, slot);
 
 		if (CMP(prev_key, cur_key) >= 0)
-		{
 			return false;
-		}
 
 		prev_key = cur_key;
 	}
 
-	if (CMP(PageGetKeyAtOffset(page, page->max_key_offset),
-			PageGetKeyAtSlot(page, page->num_keys - 1)) < 0)
+	if (PageIsLeaf(page))
 	{
-		return false;
+		for (slot = 1; slot < page->num_keys; slot++)
+		{
+			void *value;
+
+			if (!btree_find(btree, PageGetKeyAtSlot(page, slot), &value))
+				return false;
+		}
 	}
 
 	return true;
 }
 
+
+static bool
+check_level_reacheablity(btree_page_t *page)
+{
+	if (PageIsInner(page))
+	{
+		btree_page_t *downlink			  = *PageGetPtrToDownLinkAtSlot(page, 0);
+		int			 low_page_count		  = 0;
+		int			 reachable_page_count = 0;
+
+		while (downlink)
+		{
+			low_page_count++;
+			downlink = downlink->rightlink;
+		}
+
+		while (page)
+		{
+			reachable_page_count += page->num_keys;
+			page				  = page->rightlink;
+		}
+
+		return reachable_page_count == low_page_count;
+	}
+	else
+	{
+		return true;
+	}
+}
+
+
+#endif
+
+
+#ifdef ENABLE_BTREE_DUMP
 
 static void
 dump_btree(btree_t btree)
@@ -728,9 +957,7 @@ dump_btree_level(btree_page_t *page)
 		page = page->rightlink;
 
 		if (page)
-		{
 			printf(", ");
-		}
 	}
 }
 
@@ -740,15 +967,16 @@ dump_btree_page(btree_page_t *page)
 {
 	printf("|");
 
-	for (int i = 1; i < page->num_keys; i++)
+	for (page_slot_t slot = 1; slot < page->num_keys; slot++)
 	{
-		printf("%ld", *(long *) PageGetKeyAtSlot(page, i));
+		printf("%ld", *(long *) PageGetKeyAtSlot(page, slot));
 
-		if (i != page->num_keys - 1)
-		{
+		if (slot != page->num_keys - 1)
 			printf(", ");
-		}
 	}
 
 	printf("|");
 }
+
+
+#endif
