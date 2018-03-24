@@ -493,16 +493,15 @@ static void
 split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *value)
 {
 	btree_page_t *page_to_split;
-	btree_page_t *left_page;
 	page_slot_t	 slot;
-	btree_page_t *right_page;
 	bool		 free_insert_key = false;
 
 	pop_from_stack(stack, &page_to_split, &slot);
 
 	while (true)
 	{
-		void *split_key;
+		btree_page_t *left_page, *right_page, *parent_page;
+		void		 *split_key;
 
 		if (page_to_split->num_keys == 1)
 		{
@@ -516,9 +515,9 @@ split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *val
 		if (free_insert_key)
 			free((void *) key);
 
-		pop_from_stack(stack, &page_to_split, &slot);
+		pop_from_stack(stack, &parent_page, &slot);
 
-		if (page_to_split == NULL)
+		if (parent_page == NULL)
 		{
 			btree_page_t *root = new_page(btree, right_page->height + 1);
 
@@ -531,15 +530,16 @@ split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *val
 		}
 		else
 		{
-			if (does_item_fit_into_page(btree, page_to_split, split_key, false))
+			if (does_item_fit_into_page(btree, parent_page, split_key, false))
 			{
-				insert_into_page(btree, page_to_split, split_key, right_page);
+				insert_into_page(btree, parent_page, split_key, right_page);
 
 				free(split_key);
 				break;
 			}
 			else
 			{
+				page_to_split	= parent_page;
 				key				= split_key;
 				value			= right_page;
 				free_insert_key = true;
