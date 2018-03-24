@@ -30,12 +30,6 @@ struct btree_data_t
 
 typedef struct
 {
-	int			key_present : 1;
-	page_slot_t slot		: sizeof(page_off_t) * 8;
-} bsearch_result_t;
-
-typedef struct
-{
 	union
 	{
 		void		 *value;
@@ -105,13 +99,13 @@ PageGetKeyAtSlot(btree_page_t *page, page_slot_t slot)
 }
 
 
-#define GetPrevSlot(res) ((res).slot - 1)
+#define GetPrevSlot(res) ((slot) - 1)
 
 typedef struct
 {
-	btree_page_t	 *page;
-	bsearch_result_t search_res;
-	slist_node		 list_node;
+	btree_page_t *page;
+	page_slot_t	 slot;
+	slist_node	 list_node;
 } btree_stack_node_t;
 
 
@@ -142,18 +136,18 @@ btree_destroy(btree_t btree)
 
 
 static void
-push_to_stack(slist_head *stack, btree_page_t *page, bsearch_result_t search_res)
+push_to_stack(slist_head *stack, btree_page_t *page, page_slot_t slot)
 {
 	btree_stack_node_t *node = malloc(sizeof(btree_stack_node_t));
 
-	node->page		 = page;
-	node->search_res = search_res;
+	node->page = page;
+	node->slot = slot;
 	slist_push_head(stack, &node->list_node);
 }
 
 
 static bool
-pop_from_stack(slist_head *stack, btree_page_t **page, bsearch_result_t *search_res)
+pop_from_stack(slist_head *stack, btree_page_t **page, page_slot_t *slot)
 {
 	btree_stack_node_t *node;
 
@@ -165,8 +159,8 @@ pop_from_stack(slist_head *stack, btree_page_t **page, bsearch_result_t *search_
 
 	node = slist_head_element(btree_stack_node_t, list_node, stack);
 
-	*page		= node->page;
-	*search_res = node->search_res;
+	*page = node->page;
+	*slot = node->slot;
 
 	slist_pop_head_node(stack);
 	free(node);
@@ -178,20 +172,19 @@ pop_from_stack(slist_head *stack, btree_page_t **page, bsearch_result_t *search_
 static void
 destroy_stack(slist_head *stack)
 {
-	btree_page_t	 *page;
-	bsearch_result_t search_res;
+	btree_page_t *page;
+	page_slot_t	 slot;
 
-	while (pop_from_stack(stack, &page, &search_res))
+	while (pop_from_stack(stack, &page, &slot))
 	{ }
 }
 
 
-static bsearch_result_t
-bsearch_page(btree_t btree, btree_page_t *page, const void *scan_key)
+static page_slot_t
+bsearch_page(btree_t btree, btree_page_t *page, const void *scan_key, bool *isKeyPresent)
 {
-	page_slot_t		 low, mid, high, result;
-	page_off_t		 *offsetArray = page->offsetArray;
-	bsearch_result_t res;
+	page_slot_t low, mid, high, result;
+	page_off_t	*offsetArray = page->offsetArray;
 
 	low	   = 0;
 	high   = page->num_keys - 1;
@@ -210,10 +203,8 @@ bsearch_page(btree_t btree, btree_page_t *page, const void *scan_key)
 			low = mid + 1;
 	}
 
-	res.key_present = result == 0;
-	res.slot		= result == 0 ? mid : low;
-
-	return res;
+	*isKeyPresent = result == 0;
+	return result == 0 ? mid : low;
 }
 
 
@@ -351,9 +342,11 @@ can_merge_pages(btree_t btree, btree_page_t *page1, btree_page_t *page2)
 static void
 insert_into_page(btree_t btree, btree_page_t *page, const void *key, const void *value)
 {
-	bsearch_result_t res = bsearch_page(btree, page, key);
+	bool		isKeyPresent;
+	page_slot_t slot;
 
-	add_to_page(btree, page, key, value, res.slot, res.key_present);
+	slot = bsearch_page(btree, page, key, &isKeyPresent);
+	add_to_page(btree, page, key, value, slot, isKeyPresent);
 }
 
 
@@ -472,26 +465,25 @@ split_page(btree_t btree, btree_page_t *page_to_split, const void *key, const vo
 static void
 split_page_and_insert(btree_t btree, slist_head *stack, const void *key, void *value)
 {
-	btree_page_t	 *page_to_split;
-	btree_page_t	 *left_page;
-	bsearch_result_t search_res;
-	btree_page_t	 *right_page;
-	bool			 split_done		 = false;
-	bool			 free_insert_key = false;
+	btree_page_t *page_to_split;
+	btree_page_t *left_page;
+	page_slot_t	 slot;
+	btree_page_t *right_page;
+	bool		 split_done		 = false;
+	bool		 free_insert_key = false;
 
-	pop_from_stack(stack, &page_to_split, &search_res);
+	pop_from_stack(stack, &page_to_split, &slot);
 
 	while (!split_done)
 	{
-		void *split_key = split_page(btree, page_to_split, key, value, search_res.slot,
-									 &right_page);
+		void *split_key = split_page(btree, page_to_split, key, value, slot, &right_page);
 
 		left_page = page_to_split;
 
 		if (free_insert_key)
 			free((void *) key);
 
-		pop_from_stack(stack, &page_to_split, &search_res);
+		pop_from_stack(stack, &page_to_split, &slot);
 
 		if (page_to_split == NULL)
 		{
@@ -630,18 +622,18 @@ merge_pages(btree_t btree, btree_page_t *parent_page,
 static void
 merge_with_adjacent_page(btree_t btree, slist_head *stack)
 {
-	btree_page_t	 *parent_page;
-	bsearch_result_t search_res;
-	bool			 is_leaf = true;
+	btree_page_t *parent_page;
+	page_slot_t	 slot;
+	bool		 is_leaf = true;
 
 	do
 	{
 		int	 left_page_slot, right_page_slot, sibiling_slot, slot;
 		void *right_page_index_key;
 
-		pop_from_stack(stack, &parent_page, &search_res);
+		pop_from_stack(stack, &parent_page, &slot);
 
-		slot = GetPrevSlot(search_res);
+		slot = GetPrevSlot(slot);
 
 		if (parent_page == NULL)
 			break;
@@ -667,27 +659,26 @@ merge_with_adjacent_page(btree_t btree, slist_head *stack)
 
 static void
 btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **leaf_page,
-			 bsearch_result_t *last_search_res)
+			 page_slot_t *leaf_page_slot, bool *isKeyPresent)
 {
-	btree_page_t	 *page = btree->root;
-	bsearch_result_t search_res;
+	btree_page_t *page = btree->root;
 
 	slist_init(stack);
 
 	if (page != NULL)
 	{
-		bsearch_result_t search_res;
+		page_slot_t slot;
 
 		while (page != NULL)
 		{
-			search_res = bsearch_page(btree, page, key);
+			slot = bsearch_page(btree, page, key, isKeyPresent);
 
-			push_to_stack(stack, page, search_res);
+			push_to_stack(stack, page, slot);
 
 			if (PageIsLeaf(page))
 			{
-				*leaf_page		 = page;
-				*last_search_res = search_res;
+				*leaf_page		= page;
+				*leaf_page_slot = slot;
 				break;
 			}
 			else
@@ -698,9 +689,9 @@ btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **l
 	}
 	else
 	{
-		*leaf_page					 = NULL;
-		last_search_res->key_present = false;
-		last_search_res->slot		 = -1;
+		*leaf_page		= NULL;
+		*leaf_page_slot = -1;
+		*isKeyPresent	= false;
 	}
 }
 
@@ -708,9 +699,10 @@ btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **l
 bool
 btree_insert(btree_t btree, const void *key, const void *value)
 {
-	btree_page_t	 *leaf_page;
-	slist_head		 stack;
-	bsearch_result_t search_res;
+	btree_page_t *leaf_page;
+	slist_head	 stack;
+	page_slot_t	 slot;
+	bool		 isKeyPresent;
 
 	if (btree->root == NULL)
 	{
@@ -718,18 +710,18 @@ btree_insert(btree_t btree, const void *key, const void *value)
 		add_to_page(btree, btree->root, NULL, NULL, 0, false);
 	}
 
-	btree_search(btree, key, &stack, &leaf_page, &search_res);
+	btree_search(btree, key, &stack, &leaf_page, &slot, &isKeyPresent);
 
-	if (!search_res.key_present)
+	if (!isKeyPresent)
 	{
-		if (does_item_fit_into_page(btree, leaf_page, key, search_res.key_present))
-			add_to_page(btree, leaf_page, key, value, search_res.slot, search_res.key_present);
+		if (does_item_fit_into_page(btree, leaf_page, key, isKeyPresent))
+			add_to_page(btree, leaf_page, key, value, slot, isKeyPresent);
 		else
 			split_page_and_insert(btree, &stack, key, (void *) value);
 	}
 	else
 	{
-		add_to_page(btree, leaf_page, key, value, search_res.slot, search_res.key_present);
+		add_to_page(btree, leaf_page, key, value, slot, isKeyPresent);
 	}
 
 #ifdef ENABLE_CHECK_BTREE_INTEGRITY
@@ -742,27 +734,28 @@ btree_insert(btree_t btree, const void *key, const void *value)
 
 	destroy_stack(&stack);
 
-	return !search_res.key_present;
+	return isKeyPresent;
 }
 
 
 bool
 btree_delete(btree_t btree, const void *key, void **value)
 {
-	btree_page_t	 *leaf_page;
-	slist_head		 stack;
-	bsearch_result_t search_res;
+	btree_page_t *leaf_page;
+	slist_head	 stack;
+	page_slot_t	 slot;
+	bool		 isKeyPresent;
 
-	btree_search(btree, key, &stack, &leaf_page, &search_res);
+	btree_search(btree, key, &stack, &leaf_page, &slot, &isKeyPresent);
 
-	if (search_res.key_present)
+	if (isKeyPresent)
 	{
-		*value = *PageGetValuesAtSlot(leaf_page, search_res.slot);
-		delete_from_page(btree, leaf_page, search_res.slot);
+		*value = *PageGetValuesAtSlot(leaf_page, slot);
+		delete_from_page(btree, leaf_page, slot);
 
 		if (is_page_under_filled(btree, leaf_page))
 		{
-			pop_from_stack(&stack, &leaf_page, &search_res);
+			pop_from_stack(&stack, &leaf_page, &slot);
 			merge_with_adjacent_page(btree, &stack);
 		}
 	}
@@ -777,25 +770,26 @@ btree_delete(btree_t btree, const void *key, void **value)
 
 	destroy_stack(&stack);
 
-	return search_res.key_present;
+	return isKeyPresent;
 }
 
 
 bool
 btree_find(btree_t btree, const void *key, void **value)
 {
-	slist_head		 stack;
-	btree_page_t	 *leaf_page;
-	bsearch_result_t search_res;
+	slist_head	 stack;
+	btree_page_t *leaf_page;
+	page_slot_t	 slot;
+	bool		 isKeyPresent;
 
-	btree_search(btree, key, &stack, &leaf_page, &search_res);
+	btree_search(btree, key, &stack, &leaf_page, &slot, &isKeyPresent);
 
-	if (search_res.key_present)
-		*value = *PageGetValuesAtSlot(leaf_page, search_res.slot);
+	if (isKeyPresent)
+		*value = *PageGetValuesAtSlot(leaf_page, slot);
 
 	destroy_stack(&stack);
 
-	return search_res.key_present;
+	return isKeyPresent;
 }
 
 
