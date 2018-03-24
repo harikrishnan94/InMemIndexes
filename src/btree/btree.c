@@ -463,21 +463,40 @@ split_page(btree_t btree, btree_page_t *page_to_split, const void *key, const vo
 
 
 static void
+reinit_page_and_insert(btree_t btree, btree_page_t *page, const void *key, const void *value)
+{
+	btree_page_t *fresh_page = new_page(btree, page->height);
+
+	add_to_page(btree, fresh_page, NULL, *PageGetPtrToDownLinkAtSlot(page, 0), 0, false);
+	add_to_page(btree, fresh_page, key, value, 1, false);
+	memcpy(page, fresh_page, btree->pagesize);
+
+	free(fresh_page);
+}
+
+
+static void
 split_page_and_insert(btree_t btree, slist_head *stack, const void *key, void *value)
 {
 	btree_page_t *page_to_split;
 	btree_page_t *left_page;
 	page_slot_t	 slot;
 	btree_page_t *right_page;
-	bool		 split_done		 = false;
 	bool		 free_insert_key = false;
 
 	pop_from_stack(stack, &page_to_split, &slot);
 
-	while (!split_done)
+	while (true)
 	{
-		void *split_key = split_page(btree, page_to_split, key, value, slot, &right_page);
+		void *split_key;
 
+		if (page_to_split->num_keys == 1)
+		{
+			reinit_page_and_insert(btree, page_to_split, key, value);
+			break;
+		}
+
+		split_key = split_page(btree, page_to_split, key, value, slot, &right_page);
 		left_page = page_to_split;
 
 		if (free_insert_key)
@@ -494,7 +513,7 @@ split_page_and_insert(btree_t btree, slist_head *stack, const void *key, void *v
 			btree->root = root;
 
 			free(split_key);
-			split_done = true;
+			break;
 		}
 		else
 		{
@@ -503,7 +522,7 @@ split_page_and_insert(btree_t btree, slist_head *stack, const void *key, void *v
 				insert_into_page(btree, page_to_split, split_key, right_page);
 
 				free(split_key);
-				split_done = true;
+				break;
 			}
 			else
 			{
@@ -734,7 +753,7 @@ btree_insert(btree_t btree, const void *key, const void *value)
 
 	destroy_stack(&stack);
 
-	return isKeyPresent;
+	return !isKeyPresent;
 }
 
 
