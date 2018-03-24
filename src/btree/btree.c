@@ -682,7 +682,8 @@ btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **l
 {
 	btree_page_t *page = btree->root;
 
-	slist_init(stack);
+	if (stack)
+		slist_init(stack);
 
 	if (page != NULL)
 	{
@@ -692,7 +693,8 @@ btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **l
 		{
 			slot = bsearch_page(btree, page, key, isKeyPresent);
 
-			push_to_stack(stack, page, slot);
+			if (stack)
+				push_to_stack(stack, page, slot);
 
 			if (PageIsLeaf(page))
 			{
@@ -796,17 +798,14 @@ btree_delete(btree_t btree, const void *key, void **value)
 bool
 btree_find(btree_t btree, const void *key, void **value)
 {
-	slist_head	 stack;
 	btree_page_t *leaf_page;
 	page_slot_t	 slot;
 	bool		 isKeyPresent;
 
-	btree_search(btree, key, &stack, &leaf_page, &slot, &isKeyPresent);
+	btree_search(btree, key, NULL, &leaf_page, &slot, &isKeyPresent);
 
 	if (isKeyPresent)
 		*value = *PageGetValuesAtSlot(leaf_page, slot);
-
-	destroy_stack(&stack);
 
 	return isKeyPresent;
 }
