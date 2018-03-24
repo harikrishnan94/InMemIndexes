@@ -54,6 +54,8 @@ struct btree_page_t
 #define PageIsLeaf(page)  ((page)->height == 0)
 #define PageIsInner(page) ((page)->height > 0)
 
+static void destroy_page_recursively(btree_page_t *page);
+
 #ifdef ENABLE_CHECK_BTREE_INTEGRITY
 
 static bool check_btree_integrity(btree_t btree);
@@ -132,7 +134,28 @@ btree_create(int pagesize, btree_key_val_info_t *kv_info)
 
 void
 btree_destroy(btree_t btree)
-{ }
+{
+	destroy_page_recursively(btree->root);
+	free(btree);
+}
+
+
+static void
+destroy_page_recursively(btree_page_t *page)
+{
+	if (page)
+	{
+		destroy_page_recursively(*PageGetPtrToDownLinkAtSlot(page, 0));
+
+		do
+		{
+			btree_page_t *old_page = page;
+
+			page = page->rightlink;
+			free(old_page);
+		} while (page);
+	}
+}
 
 
 static void

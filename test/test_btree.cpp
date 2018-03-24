@@ -58,6 +58,8 @@ TEST_CASE("BtreeBasicTest", "[bwtree]")
 		REQUIRE(reinterpret_cast<long>(val) == kv.second);
 		REQUIRE(btree_find(btree, &kv.first, &val) == false);
 	}
+
+	btree_destroy(btree);
 }
 
 
@@ -178,6 +180,8 @@ TEST_CASE("BtreeMixedTest", "[btree]")
 		REQUIRE(reinterpret_cast<long>(val) == kv.second);
 		REQUIRE(btree_find(btree, &kv.first, &val) == false);
 	}
+
+	btree_destroy(btree);
 }
 
 
@@ -227,4 +231,6 @@ TEST_CASE("BtreeTestString", "[btree]")
 		REQUIRE(btree_delete(btree, kv.first, &val) == true);
 		REQUIRE(reinterpret_cast<long>(val) == kv.second);
 	}
+
+	btree_destroy(btree);
 }
