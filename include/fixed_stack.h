@@ -9,10 +9,9 @@ extern "C" {
 
 typedef struct
 {
-	unsigned max_size;
-	unsigned elem_size;
-	unsigned head;
-	unsigned padding;
+	unsigned max_size  : 16;
+	unsigned elem_size : 16;
+	unsigned head	   : 16;
 
 	char stack_data[];
 } fstack_t;
