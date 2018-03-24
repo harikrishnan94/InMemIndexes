@@ -15,7 +15,6 @@ typedef int (*btree_key_size_t)(const void *key, void *extra_arg);
 typedef struct
 {
 	btree_key_compare_t cmp_key;
-	btree_node_delete_t del_node;
 	btree_key_size_t	key_size;
 	void				*extra_arg;
 } btree_key_val_info_t;

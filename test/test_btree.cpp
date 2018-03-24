@@ -12,8 +12,6 @@ TEST_CASE("BtreeBasicTest", "[bwtree]")
 					{
 						return static_cast<int>(sizeof(long));
 					};
-	auto delete_node = [](void *node, void *extra_arg)
-					   { };
 	auto compare_key = [] (const void *a1, const void *a2, void *extra_arg)
 					   {
 						   return static_cast<int>(*reinterpret_cast<const long *>(a1) -
@@ -29,7 +27,7 @@ TEST_CASE("BtreeBasicTest", "[bwtree]")
 					   };
 
 
-	btree_key_val_info_t kv_info = { compare_key, delete_node, key_size, NULL };
+	btree_key_val_info_t kv_info = { compare_key, key_size, NULL };
 
 	int		btree_pagesize = 8192;
 	long	num_keys	   = 1024 * 1024;
@@ -75,7 +73,7 @@ TEST_CASE("BtreeTestString", "[btree]")
 					   return reinterpret_cast<const void *>(v);
 				   };
 
-	btree_key_val_info_t kv_info = { compare_key, delete_node, key_size, NULL };
+	btree_key_val_info_t kv_info = { compare_key, key_size, NULL };
 
 	int		btree_pagesize = 8 * 1024;
 	long	num_keys	   = 1 * 1024 * 1024;
