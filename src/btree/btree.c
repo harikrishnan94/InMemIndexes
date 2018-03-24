@@ -1,5 +1,6 @@
 #include "btree/btree.h"
 #include "ilist.h"
+#include "fixed_stack.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -56,6 +57,12 @@ struct btree_page_t
 
 static void destroy_page_recursively(btree_page_t *page);
 
+struct stack_node_t
+{
+	btree_page_t *page;
+	int			 slot;
+};
+
 #ifdef ENABLE_CHECK_BTREE_INTEGRITY
 
 static bool check_btree_integrity(btree_t btree);
@@ -102,13 +109,6 @@ PageGetKeyAtSlot(btree_page_t *page, page_slot_t slot)
 
 
 #define GetPrevSlot(res) ((slot) - 1)
-
-typedef struct
-{
-	btree_page_t *page;
-	page_slot_t	 slot;
-	slist_node	 list_node;
-} btree_stack_node_t;
 
 
 btree_t
@@ -159,47 +159,38 @@ destroy_page_recursively(btree_page_t *page)
 
 
 static void
-push_to_stack(slist_head *stack, btree_page_t *page, page_slot_t slot)
+push_to_stack(fstack_t *stack, btree_page_t *page, page_slot_t slot)
 {
-	btree_stack_node_t *node = malloc(sizeof(btree_stack_node_t));
+	struct stack_node_t snode;
+	bool				is_stack_full;
 
-	node->page = page;
-	node->slot = slot;
-	slist_push_head(stack, &node->list_node);
+	snode.page = page;
+	snode.slot = slot;
+
+	stack_push(stack, struct stack_node_t, snode, is_stack_full);
+
+	assert(!is_stack_full);
 }
 
 
 static bool
-pop_from_stack(slist_head *stack, btree_page_t **page, page_slot_t *slot)
+pop_from_stack(fstack_t *stack, btree_page_t **page, page_slot_t *slot)
 {
-	btree_stack_node_t *node;
+	struct stack_node_t snode;
+	bool				is_stack_empty;
 
-	if (slist_is_empty(stack))
+	stack_pop(stack, struct stack_node_t, snode, is_stack_empty);
+
+	if (is_stack_empty)
 	{
 		*page = NULL;
 		return false;
 	}
 
-	node = slist_head_element(btree_stack_node_t, list_node, stack);
-
-	*page = node->page;
-	*slot = node->slot;
-
-	slist_pop_head_node(stack);
-	free(node);
+	*page = snode.page;
+	*slot = snode.slot;
 
 	return true;
-}
-
-
-static void
-destroy_stack(slist_head *stack)
-{
-	btree_page_t *page;
-	page_slot_t	 slot;
-
-	while (pop_from_stack(stack, &page, &slot))
-	{ }
 }
 
 
@@ -499,7 +490,7 @@ reinit_page_and_insert(btree_t btree, btree_page_t *page, const void *key, const
 
 
 static void
-split_page_and_insert(btree_t btree, slist_head *stack, const void *key, void *value)
+split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *value)
 {
 	btree_page_t *page_to_split;
 	btree_page_t *left_page;
@@ -662,7 +653,7 @@ merge_pages(btree_t btree, btree_page_t *parent_page,
 
 
 static void
-merge_with_adjacent_page(btree_t btree, slist_head *stack)
+merge_with_adjacent_page(btree_t btree, fstack_t *stack)
 {
 	btree_page_t *parent_page;
 	page_slot_t	 slot;
@@ -700,42 +691,28 @@ merge_with_adjacent_page(btree_t btree, slist_head *stack)
 
 
 static void
-btree_search(btree_t btree, const void *key, slist_head *stack, btree_page_t **leaf_page,
+btree_search(btree_t btree, const void *key, fstack_t *stack, btree_page_t **leaf_page,
 			 page_slot_t *leaf_page_slot, bool *isKeyPresent)
 {
 	btree_page_t *page = btree->root;
 
-	if (stack)
-		slist_init(stack);
-
-	if (page != NULL)
+	while (page != NULL)
 	{
-		page_slot_t slot;
+		page_slot_t slot = bsearch_page(btree, page, key, isKeyPresent);
 
-		while (page != NULL)
+		if (stack)
+			push_to_stack(stack, page, slot);
+
+		if (PageIsLeaf(page))
 		{
-			slot = bsearch_page(btree, page, key, isKeyPresent);
-
-			if (stack)
-				push_to_stack(stack, page, slot);
-
-			if (PageIsLeaf(page))
-			{
-				*leaf_page		= page;
-				*leaf_page_slot = slot;
-				break;
-			}
-			else
-			{
-				page = *PageGetPtrToDownLinkAtSlot(page, GetPrevSlot(search_res));
-			}
+			*leaf_page		= page;
+			*leaf_page_slot = slot;
+			break;
 		}
-	}
-	else
-	{
-		*leaf_page		= NULL;
-		*leaf_page_slot = -1;
-		*isKeyPresent	= false;
+		else
+		{
+			page = *PageGetPtrToDownLinkAtSlot(page, GetPrevSlot(search_res));
+		}
 	}
 }
 
@@ -744,7 +721,7 @@ bool
 btree_insert(btree_t btree, const void *key, const void *value)
 {
 	btree_page_t *leaf_page;
-	slist_head	 stack;
+	fstack_t	 *stack;
 	page_slot_t	 slot;
 	bool		 isKeyPresent;
 
@@ -754,14 +731,16 @@ btree_insert(btree_t btree, const void *key, const void *value)
 		add_to_page(btree, btree->root, NULL, NULL, 0, false);
 	}
 
-	btree_search(btree, key, &stack, &leaf_page, &slot, &isKeyPresent);
+	stack = stack_create(sizeof(struct stack_node_t), btree->root->height + 1);
+
+	btree_search(btree, key, stack, &leaf_page, &slot, &isKeyPresent);
 
 	if (!isKeyPresent)
 	{
 		if (does_item_fit_into_page(btree, leaf_page, key, isKeyPresent))
 			add_to_page(btree, leaf_page, key, value, slot, isKeyPresent);
 		else
-			split_page_and_insert(btree, &stack, key, (void *) value);
+			split_page_and_insert(btree, stack, key, (void *) value);
 	}
 	else
 	{
@@ -776,7 +755,7 @@ btree_insert(btree_t btree, const void *key, const void *value)
 	}
 #endif
 
-	destroy_stack(&stack);
+	stack_destroy(stack);
 
 	return !isKeyPresent;
 }
@@ -786,11 +765,16 @@ bool
 btree_delete(btree_t btree, const void *key, void **value)
 {
 	btree_page_t *leaf_page;
-	slist_head	 stack;
+	fstack_t	 *stack;
 	page_slot_t	 slot;
 	bool		 isKeyPresent;
 
-	btree_search(btree, key, &stack, &leaf_page, &slot, &isKeyPresent);
+	if (btree->root == NULL)
+		return false;
+
+	stack = stack_create(sizeof(struct stack_node_t), btree->root->height + 1);
+
+	btree_search(btree, key, stack, &leaf_page, &slot, &isKeyPresent);
 
 	if (isKeyPresent)
 	{
@@ -799,8 +783,8 @@ btree_delete(btree_t btree, const void *key, void **value)
 
 		if (is_page_under_filled(btree, leaf_page))
 		{
-			pop_from_stack(&stack, &leaf_page, &slot);
-			merge_with_adjacent_page(btree, &stack);
+			pop_from_stack(stack, &leaf_page, &slot);
+			merge_with_adjacent_page(btree, stack);
 		}
 	}
 
@@ -812,7 +796,7 @@ btree_delete(btree_t btree, const void *key, void **value)
 	}
 #endif
 
-	destroy_stack(&stack);
+	stack_destroy(stack);
 
 	return isKeyPresent;
 }
@@ -824,6 +808,9 @@ btree_find(btree_t btree, const void *key, void **value)
 	btree_page_t *leaf_page;
 	page_slot_t	 slot;
 	bool		 isKeyPresent;
+
+	if (btree->root == NULL)
+		return false;
 
 	btree_search(btree, key, NULL, &leaf_page, &slot, &isKeyPresent);
 
