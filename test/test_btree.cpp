@@ -30,8 +30,8 @@ TEST_CASE("BtreeBasicTest", "[bwtree]")
 
 	btree_key_val_info_t kv_info = { compare_key, key_size, NULL };
 
-	int		btree_pagesize = 100;
-	int		num_keys	   = 20;
+	int		btree_pagesize = 8192;
+	int		num_keys	   = 1024 * 1024;
 	btree_t btree		   = btree_create(btree_pagesize, &kv_info);
 	long	key;
 
