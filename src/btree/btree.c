@@ -1,5 +1,6 @@
 #include "btree/btree.h"
 #include "fixed_stack.h"
+#include <btree/mapping_table.h>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -51,16 +52,16 @@ struct btree_page_t
 	page_off_t offsetArray[];
 };
 
-#define PageIsLeaf(page)  ((page)->height == 0)
-#define PageIsInner(page) ((page)->height > 0)
-
-static void destroy_page_recursively(btree_page_t *page);
-
 struct stack_node_t
 {
 	btree_page_t *page;
 	int			 slot;
 };
+
+#define PageIsLeaf(page)  ((page)->height == 0)
+#define PageIsInner(page) ((page)->height > 0)
+
+static void destroy_page_recursively(btree_page_t *page);
 
 static inline btree_page_t **
 PageGetPtrToDownLinkAtSlot(btree_page_t *page, page_slot_t slot)
@@ -77,7 +78,7 @@ PageGetValuesAtSlot(btree_page_t *page, page_slot_t slot)
 
 
 static inline void *
-PageGetKeyAtOffset(btree_page_t *page, int offset)
+PageGetKeyAtOffset(btree_page_t *page, page_off_t offset)
 {
 	return ((btree_page_item_t *) ((char *) page + offset))->key;
 }
