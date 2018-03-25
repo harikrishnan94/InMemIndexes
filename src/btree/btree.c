@@ -10,6 +10,9 @@
 #define MIN_PAGE_SIZE 64
 #define MAX_PAGE_SIZE (8 * 1024)
 
+#define MAPPING_TABLE_SIZE (1024 * 1024)
+#define NULL_PAGE_ID	   0
+
 #define Max(a, b) ((a) > (b) ? (a) : (b))
 #define Min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -24,17 +27,19 @@ typedef struct btree_page_t btree_page_t;
 
 struct btree_data_t
 {
-	btree_key_val_info_t *kv_info;
-	int					 pagesize;
-	btree_page_t		 *root;
+	btree_key_val_info_t  *kv_info;
+	int					  pagesize;
+	btree_mapping_table_t mtable;
+
+	btree_page_id_t root;
 };
 
 typedef struct
 {
 	union
 	{
-		void		 *value;
-		btree_page_t *downlink;
+		void			*value;
+		btree_page_id_t downlink;
 	};
 	char key[0];
 } btree_page_item_t;
@@ -46,7 +51,8 @@ struct btree_page_t
 	int num_keys;
 	int logical_pagesize;
 
-	btree_page_t *rightlink;
+	btree_page_id_t pid;
+	btree_page_id_t rightlink;
 
 	page_off_t page_data_start_offset;
 	page_off_t offsetArray[];
@@ -54,19 +60,19 @@ struct btree_page_t
 
 struct stack_node_t
 {
-	btree_page_t *page;
-	int			 slot;
+	btree_page_id_t pid;
+	page_slot_t		slot;
 };
 
 #define PageIsLeaf(page)  ((page)->height == 0)
 #define PageIsInner(page) ((page)->height > 0)
 
-static void destroy_page_recursively(btree_page_t *page);
+static void destroy_page_recursively(btree_t btree, btree_page_id_t pid);
 
-static inline btree_page_t **
-PageGetPtrToDownLinkAtSlot(btree_page_t *page, page_slot_t slot)
+static inline btree_page_id_t
+PageGetDownLinkAtSlot(btree_page_t *page, page_slot_t slot)
 {
-	return &((btree_page_item_t *) ((char *) page + page->offsetArray[slot]))->downlink;
+	return ((btree_page_item_t *) ((char *) page + page->offsetArray[slot]))->downlink;
 }
 
 
@@ -91,7 +97,35 @@ PageGetKeyAtSlot(btree_page_t *page, page_slot_t slot)
 }
 
 
+static inline btree_page_t *
+BtreeGetPageForPid(btree_t btree, btree_page_id_t pid)
+{
+	btree_page_t *page = mapping_table_lookup_page(btree->mtable, pid);
+
+	assert(page ? page->pid == pid : true);
+
+	return page;
+}
+
+
+static inline btree_page_t *
+PageGetDownLinkPageAtSlot(btree_t btree, btree_page_t *page, page_slot_t slot)
+{
+	return BtreeGetPageForPid(btree, ((btree_page_item_t *) ((char *) page +
+															 page->offsetArray[slot]))->downlink);
+}
+
+
+static inline btree_page_t *
+BtreeGetRoot(btree_t btree)
+{
+	return BtreeGetPageForPid(btree, btree->root);
+}
+
+
 #define GetPrevSlot(res) ((slot) - 1)
+#define PidToPtr(pid)	 ((void *) (uintptr_t) (pid))
+#define PtrToPid(ptr)	 ((btree_page_id_t) (uintptr_t) (ptr))
 
 
 btree_t
@@ -109,7 +143,11 @@ btree_create(int pagesize, btree_key_val_info_t *kv_info)
 
 	btree->kv_info	= kv_info;
 	btree->pagesize = pagesize;
-	btree->root		= NULL;
+	btree->root		= NULL_PAGE_ID;
+	btree->mtable	= mapping_table_create(MAPPING_TABLE_SIZE);
+
+	mapping_reserve_num_pids(btree->mtable, 1);
+	mapping_table_install_page(btree->mtable, NULL_PAGE_ID, NULL);
 
 	return btree;
 }
@@ -118,36 +156,39 @@ btree_create(int pagesize, btree_key_val_info_t *kv_info)
 void
 btree_destroy(btree_t btree)
 {
-	destroy_page_recursively(btree->root);
+	destroy_page_recursively(btree, btree->root);
+	mapping_table_destroy(btree->mtable);
 	free(btree);
 }
 
 
 static void
-destroy_page_recursively(btree_page_t *page)
+destroy_page_recursively(btree_t btree, btree_page_id_t pid)
 {
-	if (page)
+	if (pid != NULL_PAGE_ID)
 	{
-		destroy_page_recursively(*PageGetPtrToDownLinkAtSlot(page, 0));
+		btree_page_t *page = BtreeGetPageForPid(btree, pid);
+
+		destroy_page_recursively(btree, PageGetDownLinkAtSlot(page, 0));
 
 		do
 		{
-			btree_page_t *old_page = page;
+			page = BtreeGetPageForPid(btree, pid);
+			pid	 = page->rightlink;
 
-			page = page->rightlink;
-			free(old_page);
-		} while (page);
+			free(page);
+		} while (pid != NULL_PAGE_ID);
 	}
 }
 
 
 static void
-push_to_stack(fstack_t *stack, btree_page_t *page, page_slot_t slot)
+push_to_stack(fstack_t *stack, btree_page_id_t pid, page_slot_t slot)
 {
 	struct stack_node_t snode;
 	bool				is_stack_full;
 
-	snode.page = page;
+	snode.pid  = pid;
 	snode.slot = slot;
 
 	stack_push(stack, struct stack_node_t, snode, is_stack_full);
@@ -157,7 +198,7 @@ push_to_stack(fstack_t *stack, btree_page_t *page, page_slot_t slot)
 
 
 static bool
-pop_from_stack(fstack_t *stack, btree_page_t **page, page_slot_t *slot)
+pop_from_stack(fstack_t *stack, btree_page_id_t *pid, page_slot_t *slot)
 {
 	struct stack_node_t snode;
 	bool				is_stack_empty;
@@ -166,11 +207,11 @@ pop_from_stack(fstack_t *stack, btree_page_t **page, page_slot_t *slot)
 
 	if (is_stack_empty)
 	{
-		*page = NULL;
+		*pid = NULL_PAGE_ID;
 		return false;
 	}
 
-	*page = snode.page;
+	*pid  = snode.pid;
 	*slot = snode.slot;
 
 	return true;
@@ -216,8 +257,49 @@ new_page(btree_t btree, int height)
 	page->page_data_start_offset = btree->pagesize;
 	page->height				 = height;
 	page->logical_pagesize		 = sizeof(btree_page_t);
+	page->rightlink				 = NULL_PAGE_ID;
 
 	return page;
+}
+
+
+static void
+alloc_pid(btree_t btree, btree_page_t *page)
+{
+	assert(page->pid == NULL_PAGE_ID);
+
+	page->pid = mapping_table_alloc_pid(btree->mtable);
+
+	if (page->pid == InvalidPageId)
+	{
+		assert(page->pid != InvalidPageId);
+		abort();
+	}
+}
+
+
+static void
+install_page_at_pid(btree_t btree, btree_page_t *page)
+{
+	mapping_table_install_page(btree->mtable, page->pid, page);
+}
+
+
+static void
+replace_page_at_pid(btree_t btree, btree_page_t *oldpage, btree_page_t *newpage)
+{
+	newpage->pid = oldpage->pid;
+
+	mapping_table_install_page_to_replace(btree->mtable, newpage->pid, oldpage, newpage);
+	free(oldpage);
+}
+
+
+static void
+free_page(btree_t btree, btree_page_t *page)
+{
+	mapping_table_recycle_pid(btree->mtable, page->pid);
+	free(page);
 }
 
 
@@ -423,7 +505,7 @@ add_to_split_page(btree_t btree, struct page_split_state_t *split_state, page_sl
 
 static void *
 split_page(btree_t btree, btree_page_t *page_to_split, const void *key, const void *value,
-		   page_slot_t insert_key_slot, btree_page_t **right_page_ptr)
+		   page_slot_t insert_key_slot, btree_page_t **left_page_ptr, btree_page_t **right_page_ptr)
 {
 	btree_page_t			  *left_page  = new_page(btree, page_to_split->height);
 	btree_page_t			  *right_page = new_page(btree, page_to_split->height);
@@ -448,12 +530,16 @@ split_page(btree_t btree, btree_page_t *page_to_split, const void *key, const vo
 	if (split_state.insert_key_slot == num_keys)
 		add_to_page(btree, right_page, key, value, right_page->num_keys, false);
 
-	left_page->rightlink  = right_page;
-	right_page->rightlink = page_to_split->rightlink;
-	*right_page_ptr		  = right_page;
+	alloc_pid(btree, right_page);
 
-	memcpy(page_to_split, left_page, btree->pagesize);
-	free(left_page);
+	left_page->rightlink  = right_page->pid;
+	right_page->rightlink = page_to_split->rightlink;
+
+	install_page_at_pid(btree, right_page);
+	replace_page_at_pid(btree, page_to_split, left_page);
+
+	*left_page_ptr	= left_page;
+	*right_page_ptr = right_page;
 
 	return split_state.split_key;
 }
@@ -464,27 +550,28 @@ reinit_page_and_insert(btree_t btree, btree_page_t *page, const void *key, const
 {
 	btree_page_t *fresh_page = new_page(btree, page->height);
 
-	add_to_page(btree, fresh_page, NULL, *PageGetPtrToDownLinkAtSlot(page, 0), 0, false);
+	add_to_page(btree, fresh_page, NULL, PidToPtr(PageGetDownLinkAtSlot(page, 0)), 0, false);
 	add_to_page(btree, fresh_page, key, value, 1, false);
-	memcpy(page, fresh_page, btree->pagesize);
-
-	free(fresh_page);
+	replace_page_at_pid(btree, page, fresh_page);
 }
 
 
 static void
 split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *value)
 {
-	btree_page_t *page_to_split;
-	page_slot_t	 slot;
-	bool		 free_insert_key = false;
+	btree_page_id_t pid_to_split;
+	btree_page_t	*page_to_split;
+	page_slot_t		slot;
+	bool			free_insert_key = false;
 
-	pop_from_stack(stack, &page_to_split, &slot);
+	pop_from_stack(stack, &pid_to_split, &slot);
+	page_to_split = BtreeGetPageForPid(btree, pid_to_split);
 
 	while (true)
 	{
-		btree_page_t *left_page, *right_page, *parent_page;
-		void		 *split_key;
+		btree_page_t	*left_page, *right_page, *parent_page;
+		btree_page_id_t parent_page_pid;
+		void			*split_key;
 
 		if (page_to_split->num_keys == 1)
 		{
@@ -492,21 +579,24 @@ split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *val
 			break;
 		}
 
-		split_key = split_page(btree, page_to_split, key, value, slot, &right_page);
-		left_page = page_to_split;
+		split_key = split_page(btree, page_to_split, key, value, slot, &left_page, &right_page);
 
 		if (free_insert_key)
 			free((void *) key);
 
-		pop_from_stack(stack, &parent_page, &slot);
+		pop_from_stack(stack, &parent_page_pid, &slot);
+		parent_page = BtreeGetPageForPid(btree, parent_page_pid);
 
-		if (parent_page == NULL)
+		if (parent_page_pid == NULL_PAGE_ID)
 		{
-			btree_page_t *root = new_page(btree, right_page->height + 1);
+			btree_page_t *root = new_page(btree, left_page->height + 1);
 
-			add_to_page(btree, root, NULL, left_page, 0, false);
-			add_to_page(btree, root, split_key, right_page, 1, false);
-			btree->root = root;
+			add_to_page(btree, root, NULL, PidToPtr(left_page->pid), 0, false);
+			add_to_page(btree, root, split_key, PidToPtr(right_page->pid), 1, false);
+			alloc_pid(btree, root);
+			install_page_at_pid(btree, root);
+
+			btree->root = root->pid;
 
 			free(split_key);
 			break;
@@ -515,7 +605,7 @@ split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *val
 		{
 			if (does_item_fit_into_page(btree, parent_page, split_key, false))
 			{
-				insert_into_page(btree, parent_page, split_key, right_page);
+				insert_into_page(btree, parent_page, split_key, PidToPtr(right_page->pid));
 
 				free(split_key);
 				break;
@@ -524,7 +614,7 @@ split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *val
 			{
 				page_to_split	= parent_page;
 				key				= split_key;
-				value			= right_page;
+				value			= PidToPtr(right_page->pid);
 				free_insert_key = true;
 			}
 		}
@@ -533,14 +623,15 @@ split_page_and_insert(btree_t btree, fstack_t *stack, const void *key, void *val
 
 
 static void
-adjust_root(btree_t btree)
+replace_root(btree_t btree)
 {
-	btree_page_t *oldroot = btree->root;
+	btree_page_t *oldroot = BtreeGetRoot(btree);
 
 	if (PageIsInner(oldroot))
 	{
-		btree->root = *PageGetPtrToDownLinkAtSlot(oldroot, 0);
-		free(oldroot);
+		btree->root = PageGetDownLinkAtSlot(oldroot, 0);
+
+		free_page(btree, oldroot);
 	}
 }
 
@@ -548,15 +639,15 @@ adjust_root(btree_t btree)
 static int
 choose_merge_page(btree_t btree, btree_page_t *parent_page, page_slot_t slot)
 {
-	btree_page_t *current_page = *PageGetPtrToDownLinkAtSlot(parent_page, slot);
+	btree_page_t *current_page = PageGetDownLinkPageAtSlot(btree, parent_page, slot);
 	page_slot_t	 sibiling_page_slot;
 
 	if (slot != 0)
 	{
 		sibiling_page_slot = slot - 1;
 
-		if (can_merge_pages(btree, current_page,
-							*PageGetPtrToDownLinkAtSlot(parent_page, sibiling_page_slot)))
+		if (can_merge_pages(btree, current_page, PageGetDownLinkPageAtSlot(btree, parent_page,
+																		   sibiling_page_slot)))
 		{
 			return sibiling_page_slot;
 		}
@@ -564,8 +655,8 @@ choose_merge_page(btree_t btree, btree_page_t *parent_page, page_slot_t slot)
 		sibiling_page_slot = slot + 1;
 
 		if (sibiling_page_slot < parent_page->num_keys &&
-			can_merge_pages(btree, current_page,
-							*PageGetPtrToDownLinkAtSlot(parent_page, sibiling_page_slot)))
+			can_merge_pages(btree, current_page, PageGetDownLinkPageAtSlot(btree, parent_page,
+																		   sibiling_page_slot)))
 		{
 			return sibiling_page_slot;
 		}
@@ -575,8 +666,8 @@ choose_merge_page(btree_t btree, btree_page_t *parent_page, page_slot_t slot)
 		sibiling_page_slot = slot + 1;
 
 		if (sibiling_page_slot < parent_page->num_keys &&
-			can_merge_pages(btree, current_page,
-							*PageGetPtrToDownLinkAtSlot(parent_page, sibiling_page_slot)))
+			can_merge_pages(btree, current_page, PageGetDownLinkPageAtSlot(btree, parent_page,
+																		   sibiling_page_slot)))
 		{
 			return sibiling_page_slot;
 		}
@@ -612,42 +703,44 @@ static bool
 merge_pages(btree_t btree, btree_page_t *parent_page,
 			page_slot_t page1_slot, page_slot_t page2_slot, void *insert_key)
 {
-	btree_page_t *left_page		  = *PageGetPtrToDownLinkAtSlot(parent_page, page1_slot);
-	btree_page_t *right_page	  = *PageGetPtrToDownLinkAtSlot(parent_page, page2_slot);
-	btree_page_t *merged_page	  = new_page(btree, left_page->height);
-	bool		 merge_successful = false;
+	btree_page_t *left_page	  = PageGetDownLinkPageAtSlot(btree, parent_page, page1_slot);
+	btree_page_t *right_page  = PageGetDownLinkPageAtSlot(btree, parent_page, page2_slot);
+	btree_page_t *merged_page = new_page(btree, left_page->height);
 
 	if (add_all_keys_to_page(btree, merged_page, left_page, NULL))
 	{
 		if (add_all_keys_to_page(btree, merged_page, right_page, insert_key))
 		{
 			merged_page->rightlink = right_page->rightlink;
-			merge_successful	   = true;
 
-			memcpy(left_page, merged_page, btree->pagesize);
-			free(right_page);
+			replace_page_at_pid(btree, left_page, merged_page);
+			free_page(btree, right_page);
+
+			return true;
 		}
 	}
 
 	free(merged_page);
 
-	return merge_successful;
+	return false;
 }
 
 
 static void
 merge_with_adjacent_page(btree_t btree, fstack_t *stack)
 {
-	btree_page_t *parent_page;
-	page_slot_t	 slot;
-	bool		 is_leaf = true;
+	btree_page_id_t parent_page_id;
+	btree_page_t	*parent_page;
+	page_slot_t		slot;
+	bool			is_leaf = true;
 
 	do
 	{
 		int	 left_page_slot, right_page_slot, sibiling_slot, slot;
 		void *right_page_index_key;
 
-		pop_from_stack(stack, &parent_page, &slot);
+		pop_from_stack(stack, &parent_page_id, &slot);
+		parent_page = BtreeGetPageForPid(btree, parent_page_id);
 
 		slot = GetPrevSlot(slot);
 
@@ -668,8 +761,8 @@ merge_with_adjacent_page(btree_t btree, fstack_t *stack)
 			delete_from_page(btree, parent_page, right_page_slot);
 	} while (is_page_under_filled(btree, parent_page));
 
-	if (btree->root->num_keys == 1)
-		adjust_root(btree);
+	if (BtreeGetRoot(btree)->num_keys == 1)
+		replace_root(btree);
 }
 
 
@@ -677,14 +770,14 @@ static void
 btree_search(btree_t btree, const void *key, fstack_t *stack, btree_page_t **leaf_page,
 			 page_slot_t *leaf_page_slot, bool *isKeyPresent)
 {
-	btree_page_t *page = btree->root;
+	btree_page_t *page = BtreeGetRoot(btree);
 
 	while (page != NULL)
 	{
 		page_slot_t slot = bsearch_page(btree, page, key, isKeyPresent);
 
 		if (stack)
-			push_to_stack(stack, page, slot);
+			push_to_stack(stack, page->pid, slot);
 
 		if (PageIsLeaf(page))
 		{
@@ -694,7 +787,7 @@ btree_search(btree_t btree, const void *key, fstack_t *stack, btree_page_t **lea
 		}
 		else
 		{
-			page = *PageGetPtrToDownLinkAtSlot(page, GetPrevSlot(search_res));
+			page = PageGetDownLinkPageAtSlot(btree, page, GetPrevSlot(slot));
 		}
 	}
 }
@@ -708,13 +801,18 @@ btree_insert(btree_t btree, const void *key, const void *value)
 	page_slot_t	 slot;
 	bool		 isKeyPresent;
 
-	if (btree->root == NULL)
+	if (BtreeGetRoot(btree) == NULL)
 	{
-		btree->root = new_page(btree, 0);
-		add_to_page(btree, btree->root, NULL, NULL, 0, false);
+		btree_page_t *root = new_page(btree, 0);
+
+		add_to_page(btree, root, NULL, NULL, 0, false);
+		alloc_pid(btree, root);
+		install_page_at_pid(btree, root);
+
+		btree->root = root->pid;
 	}
 
-	stack = stack_create(sizeof(struct stack_node_t), btree->root->height + 1);
+	stack = stack_create(sizeof(struct stack_node_t), BtreeGetRoot(btree)->height + 1);
 
 	btree_search(btree, key, stack, &leaf_page, &slot, &isKeyPresent);
 
@@ -752,10 +850,10 @@ btree_delete(btree_t btree, const void *key, void **value)
 	page_slot_t	 slot;
 	bool		 isKeyPresent;
 
-	if (btree->root == NULL)
+	if (BtreeGetRoot(btree) == NULL)
 		return false;
 
-	stack = stack_create(sizeof(struct stack_node_t), btree->root->height + 1);
+	stack = stack_create(sizeof(struct stack_node_t), BtreeGetRoot(btree)->height + 1);
 
 	btree_search(btree, key, stack, &leaf_page, &slot, &isKeyPresent);
 
@@ -766,7 +864,9 @@ btree_delete(btree_t btree, const void *key, void **value)
 
 		if (is_page_under_filled(btree, leaf_page))
 		{
-			pop_from_stack(stack, &leaf_page, &slot);
+			btree_page_id_t leaf_page_id;
+
+			pop_from_stack(stack, &leaf_page_id, &slot);
 			merge_with_adjacent_page(btree, stack);
 		}
 	}
@@ -792,7 +892,7 @@ btree_find(btree_t btree, const void *key, void **value)
 	page_slot_t	 slot;
 	bool		 isKeyPresent;
 
-	if (btree->root == NULL)
+	if (BtreeGetRoot(btree) == NULL)
 		return false;
 
 	btree_search(btree, key, NULL, &leaf_page, &slot, &isKeyPresent);
@@ -807,7 +907,7 @@ btree_find(btree_t btree, const void *key, void **value)
 int
 btree_height(btree_t btree)
 {
-	return btree->root ? btree->root->height + 1 : -1;
+	return btree->root != NULL_PAGE_ID ? BtreeGetRoot(btree)->height + 1 : -1;
 }
 
 
@@ -815,13 +915,13 @@ btree_height(btree_t btree)
 
 static bool check_page_integrity(btree_t btree, btree_page_t *page, const void *prev_key);
 static bool check_level_integrity(btree_t btree, btree_page_t *page);
-static bool check_level_reacheablity(btree_page_t *page);
+static bool check_level_reachability(btree_t btree, btree_page_t *page);
 
 #endif
 
 #ifdef ENABLE_BTREE_DUMP
 
-static void dump_btree_level(btree_page_t *page);
+static void dump_btree_level(btree_t btree, btree_page_t *page);
 static void dump_btree_page(btree_page_t *page);
 
 #endif
@@ -832,9 +932,9 @@ static void dump_btree_page(btree_page_t *page);
 bool
 check_btree_integrity(btree_t btree)
 {
-	btree_page_t *page = btree->root;
+	btree_page_t *page = BtreeGetRoot(btree);
 
-	if (page && !check_level_reacheablity(page))
+	if (page && !check_level_reachability(btree, page))
 		return false;
 
 	while (page != NULL)
@@ -842,10 +942,10 @@ check_btree_integrity(btree_t btree)
 		if (!check_level_integrity(btree, page))
 			return false;
 
-		if (PageIsInner(page) && *PageGetPtrToDownLinkAtSlot(page, 0) == NULL)
+		if (PageIsInner(page) && PageGetDownLinkAtSlot(page, 0) == NULL_PAGE_ID)
 			return false;
 
-		page = PageIsLeaf(page) ? NULL : *PageGetPtrToDownLinkAtSlot(page, 0);
+		page = PageIsLeaf(page) ? NULL : PageGetDownLinkPageAtSlot(btree, page, 0);
 	}
 
 	return true;
@@ -874,7 +974,7 @@ check_level_integrity(btree_t btree, btree_page_t *page)
 			return false;
 
 		prev_key = PageGetKeyAtSlot(page, page->num_keys - 1);
-		page	 = page->rightlink;
+		page	 = BtreeGetPageForPid(btree, page->rightlink);
 	}
 
 	return true;
@@ -921,24 +1021,24 @@ check_page_integrity(btree_t btree, btree_page_t *page, const void *prev_key)
 
 
 static bool
-check_level_reacheablity(btree_page_t *page)
+check_level_reachability(btree_t btree, btree_page_t *page)
 {
 	if (PageIsInner(page))
 	{
-		btree_page_t *downlink			  = *PageGetPtrToDownLinkAtSlot(page, 0);
+		btree_page_t *downlink			  = PageGetDownLinkPageAtSlot(btree, page, 0);
 		int			 low_page_count		  = 0;
 		int			 reachable_page_count = 0;
 
 		while (downlink)
 		{
 			low_page_count++;
-			downlink = downlink->rightlink;
+			downlink = BtreeGetPageForPid(btree, downlink->rightlink);
 		}
 
 		while (page)
 		{
 			reachable_page_count += page->num_keys;
-			page				  = page->rightlink;
+			page				  = BtreeGetPageForPid(btree, page->rightlink);
 		}
 
 		return reachable_page_count == low_page_count;
@@ -955,27 +1055,27 @@ check_level_reacheablity(btree_page_t *page)
 
 #ifdef ENABLE_BTREE_DUMP
 
-static void
+void
 dump_btree(btree_t btree)
 {
-	btree_page_t *page = btree->root;
+	btree_page_t *page = BtreeGetRoot(btree);
 
 	while (page)
 	{
-		dump_btree_level(page);
+		dump_btree_level(btree, page);
 		printf("\n");
-		page = *PageGetPtrToDownLinkAtSlot(page, 0);
+		page = PageGetDownLinkPageAtSlot(btree, page, 0);
 	}
 }
 
 
 static void
-dump_btree_level(btree_page_t *page)
+dump_btree_level(btree_t btree, btree_page_t *page)
 {
 	while (page)
 	{
 		dump_btree_page(page);
-		page = page->rightlink;
+		page = BtreeGetPageForPid(btree, page->rightlink);
 
 		if (page)
 			printf(", ");

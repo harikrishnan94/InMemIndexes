@@ -87,6 +87,8 @@ flist_push_head(flist_head *head, flist_node *node)
 	{
 		flist_node *prev_head = flist_read_head(head);
 
+		node->next = prev_head;
+
 		if (swing_head(head, prev_head, node))
 			break;
 	} while (1);

@@ -41,7 +41,8 @@ mapping_table_destroy(btree_mapping_table_t mtable)
 void
 mapping_reserve_num_pids(btree_mapping_table_t mtable, uint32_t num_pids)
 {
-	atomic_fetch_add(&mtable->next_pid, num_pids);
+	assert(mtable->next_pid == 0);
+	mtable->next_pid += num_pids;
 }
 
 
@@ -53,7 +54,7 @@ mapping_table_alloc_pid(btree_mapping_table_t mtable)
 		flist_node *free_node = flist_pop_head(&mtable->free_nodes);
 
 		if (free_node)
-			return (btree_page_id_t) ((atomic_page_t *) free_node - mtable->table);
+			return (((uintptr_t) free_node - (uintptr_t) mtable->table) / sizeof(void *));
 	}
 
 	if (atomic_load(&mtable->next_pid) < mtable->size)
