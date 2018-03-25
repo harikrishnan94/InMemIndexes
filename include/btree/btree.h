@@ -18,11 +18,22 @@ extern bool btree_insert(btree_t btree, const void *key, const void *value);
 extern bool btree_find(btree_t btree, const void *key, void **value);
 extern bool btree_delete(btree_t btree, const void *key, void **value);
 
-extern bool check_btree_integrity(btree_t btree);
-
 extern size_t btree_count(btree_t btree);
 extern size_t btree_size(btree_t btree);
 extern int	  btree_height(btree_t btree);
+
+#ifdef ENABLE_CHECK_BTREE_INTEGRITY
+
+extern bool check_btree_integrity(btree_t btree);
+
+#endif
+
+#ifdef ENABLE_BTREE_DUMP
+
+extern void dump_btree(btree_t btree);
+
+#endif
+
 
 #ifdef __cplusplus
 }

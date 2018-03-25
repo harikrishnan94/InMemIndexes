@@ -62,23 +62,6 @@ struct stack_node_t
 	int			 slot;
 };
 
-#ifdef ENABLE_CHECK_BTREE_INTEGRITY
-
-static bool check_btree_integrity(btree_t btree);
-static bool check_page_integrity(btree_t btree, btree_page_t *page, const void *prev_key);
-static bool check_level_integrity(btree_t btree, btree_page_t *page);
-static bool check_level_reacheablity(btree_page_t *page);
-
-#endif
-
-#ifdef ENABLE_BTREE_DUMP
-
-static void dump_btree(btree_t btree);
-static void dump_btree_level(btree_page_t *page);
-static void dump_btree_page(btree_page_t *page);
-
-#endif
-
 static inline btree_page_t **
 PageGetPtrToDownLinkAtSlot(btree_page_t *page, page_slot_t slot)
 {
@@ -829,7 +812,23 @@ btree_height(btree_t btree)
 
 #ifdef ENABLE_CHECK_BTREE_INTEGRITY
 
-static bool
+static bool check_page_integrity(btree_t btree, btree_page_t *page, const void *prev_key);
+static bool check_level_integrity(btree_t btree, btree_page_t *page);
+static bool check_level_reacheablity(btree_page_t *page);
+
+#endif
+
+#ifdef ENABLE_BTREE_DUMP
+
+static void dump_btree_level(btree_page_t *page);
+static void dump_btree_page(btree_page_t *page);
+
+#endif
+
+
+#ifdef ENABLE_CHECK_BTREE_INTEGRITY
+
+bool
 check_btree_integrity(btree_t btree)
 {
 	btree_page_t *page = btree->root;
