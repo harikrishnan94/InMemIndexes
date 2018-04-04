@@ -124,7 +124,7 @@ AdjustNodeSize(TraversalContext *tcontext)
 	LoadLatestSnapshot(nodeid, tcontext);
 	node = tcontext->current_snapshot.page;
 
-	if (DeltaChainLen(node) >= (MAX_DELTA_NODES_PER_PAGE - 1))
+	if (DeltaChainLen(node) >= MAX_DELTA_NODES_PER_PAGE)
 		consolidate_page = true;
 
 	if (NodePageSize(node) > BwTreePageSize(btree))
@@ -294,8 +294,8 @@ SplitPage(btree_page_id_t nodeid, TraversalContext *tcontext)
 	mtable		  = BwTreeGetMappingTable(btree);
 	page		  = tcontext->current_snapshot.page;
 	meta		  = GetNodeMeta(page);
-	keys		  = malloc(sizeof(btree_key_t) * (meta->num_keys + (DeltaChainLen(page) + 1)));
-	values		  = malloc(sizeof(btree_value_t) * (meta->num_keys + (DeltaChainLen(page) + 1)));
+	keys		  = malloc(sizeof(btree_key_t) * (meta->num_keys + DeltaChainLen(page)));
+	values		  = malloc(sizeof(btree_value_t) * (meta->num_keys + DeltaChainLen(page)));
 	split_slot	  = GetSplitSpot(page);
 	split_page_id = mapping_table_alloc_pid(mtable);
 
@@ -479,8 +479,8 @@ GetLeftSibiling(btree_key_t low_key, btree_key_t *merge_key, TraversalContext *t
 	parent_page = tcontext->parent_snapshot.page;
 	meta		= GetNodeMeta(parent_page);
 
-	keys   = malloc(sizeof(btree_key_t) * (meta->num_keys + (DeltaChainLen(parent_page) + 1)));
-	values = malloc(sizeof(btree_value_t) * (meta->num_keys + (DeltaChainLen(parent_page) + 1)));
+	keys   = malloc(sizeof(btree_key_t) * (meta->num_keys + DeltaChainLen(parent_page)));
+	values = malloc(sizeof(btree_value_t) * (meta->num_keys + DeltaChainLen(parent_page)));
 
 	CollectValuesFromPage(parent_page, keys, values, FOLLOW_RIGHT_LINK, tcontext);
 	slot = GetPrevSlot(bsearch_page(tcontext->btree, low_key, keys, meta->num_keys, &keyPresent));
@@ -585,14 +585,21 @@ ConsolidatePage(btree_page_id_t nodeid, TraversalContext *tcontext)
 	btree	 = tcontext->btree;
 	old_page = tcontext->current_snapshot.page;
 	meta	 = GetNodeMeta(old_page);
-	keys	 = malloc(sizeof(btree_key_t) * (meta->num_keys + (DeltaChainLen(old_page) + 1)));
-	values	 = malloc(sizeof(btree_value_t) * (meta->num_keys + (DeltaChainLen(old_page) + 1)));
+	keys	 = malloc(sizeof(btree_key_t) * (meta->num_keys + DeltaChainLen(old_page)));
+	values	 = malloc(sizeof(btree_value_t) * (meta->num_keys + DeltaChainLen(old_page)));
 
 	Assert(meta->pid == nodeid);
 
-	CollectValuesFromPage(old_page, keys, values, IGNORE_RIGHT_LINK, tcontext);
+	if (meta->num_keys != 0)
+	{
+		CollectValuesFromPage(old_page, keys, values, IGNORE_RIGHT_LINK, tcontext);
+		new_page = NewDataPage(btree, meta, keys, values);
+	}
+	else
+	{
+		new_page = NewEmptyDataPage(btree, meta->pid, NodeIsLeaf(old_page));
+	}
 
-	new_page = NewDataPage(btree, meta, keys, values);
 	mapping_table_install_page_to_replace(BwTreeGetMappingTable(btree), nodeid, old_page, new_page);
 	RecycleDeltaChain(old_page);
 
@@ -699,10 +706,10 @@ CollectValuesFromPage(DeltaNode *page, btree_key_t *keys, void *values, bool fol
 				key_count_t	   merged_key_count = NodeKeyCount(merged_node);
 				btree_key_t	   *merged_keys		= malloc(sizeof(btree_key_t) *
 														 (merged_key_count +
-														  (DeltaChainLen(merged_node) + 1)));
+														  DeltaChainLen(merged_node)));
 				btree_value_t *merged_values = malloc(sizeof(btree_value_t) *
 													  (merged_key_count +
-													   (DeltaChainLen(merged_node) + 1)));
+													   DeltaChainLen(merged_node)));
 
 				Assert(high_key == NULL);
 				CollectValuesFromPage(merged_node, merged_keys, merged_values, IGNORE_RIGHT_LINK,
@@ -816,7 +823,7 @@ RecycleDeltaChain(DeltaNode *node)
 static fstack_t *
 GetReversedDeltaChain(DeltaNode *node)
 {
-	fstack_t *stack = stack_create(sizeof(BaseNode *), DeltaChainLen(node) + 1);
+	fstack_t *stack = stack_create(sizeof(BaseNode *), DeltaChainLen(node));
 
 	while (node)
 	{
@@ -885,8 +892,8 @@ dump_btree(bwtree_t btree)
 
 		page   = tcontext->current_snapshot.page;
 		meta   = GetNodeMeta(page);
-		keys   = malloc(sizeof(btree_key_t) * (meta->num_keys + (DeltaChainLen(page) + 1)));
-		values = malloc(sizeof(btree_value_t) * (meta->num_keys + (DeltaChainLen(page) + 1)));
+		keys   = malloc(sizeof(btree_key_t) * (meta->num_keys + DeltaChainLen(page)));
+		values = malloc(sizeof(btree_value_t) * (meta->num_keys + DeltaChainLen(page)));
 
 		Assert(meta->pid == nodeid);
 
@@ -934,8 +941,8 @@ dump_page(bwtree_t btree, btree_page_id_t pid)
 
 	page   = tcontext->current_snapshot.page;
 	meta   = GetNodeMeta(page);
-	keys   = malloc(sizeof(btree_key_t) * (meta->num_keys + (DeltaChainLen(page) + 1)));
-	values = malloc(sizeof(btree_value_t) * (meta->num_keys + (DeltaChainLen(page) + 1)));
+	keys   = malloc(sizeof(btree_key_t) * (meta->num_keys + DeltaChainLen(page)));
+	values = malloc(sizeof(btree_value_t) * (meta->num_keys + DeltaChainLen(page)));
 
 	Assert(meta->pid == pid);
 

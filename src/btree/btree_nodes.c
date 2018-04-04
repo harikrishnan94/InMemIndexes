@@ -35,31 +35,28 @@ NewDataPage(bwtree_t btree, NodeMeta *meta, btree_key_t *keys, btree_value_t *va
 {
 	DataPage *page = malloc(meta->pageSize);
 
+	Assert(meta->num_keys != 0);
+
 	page->delta.base.meta = *meta;
 	PrevNode(page)		  = NULL;
 	page->num_keys		  = meta->num_keys;
 	page->keys			  = (btree_key_t *) ((char *) page + sizeof(DataPage));
+	NodeTag(page)		  = NodeIsLeaf(page) ? T_BwTreeLeafType : T_BwTreeIndexType;
 	page->values		  = (btree_value_t *) ((char *) page + sizeof(DataPage) +
 											   sizeof(btree_key_t) * meta->num_keys);
 
-	NodeTag(page)		= NodeIsLeaf(page) ? T_BwTreeLeafType : T_BwTreeIndexType;
-	DeltaChainLen(page) = 0;
+	/*
+	 * New data page is created only when, a page is consolidated or split.
+	 * In either case the new page is the only delta.
+	 */
+	DeltaChainLen(page) = 1;
 
 	copy_keys(btree, page->keys, keys, meta->num_keys,
 			  (char *) page->values + sizeof(btree_value_t) * meta->num_keys, meta->pageSize);
 	memcpy(page->values, values, sizeof(btree_value_t) * meta->num_keys);
 
-	if (page->num_keys)
-	{
-		if (page->num_keys == 1 || page->keys[0])
-			LowKey(page) = page->keys[0];
-		else
-			LowKey(page) = page->keys[1];
-	}
-	else
-	{
-		LowKey(page) = NULL;
-	}
+	/* Index page's 0th key is NULL, so take 1th key */
+	LowKey(page) = NodeIsLeaf(page) || page->num_keys == 1 ? page->keys[0] : page->keys[1];
 
 	return page;
 }
@@ -81,9 +78,9 @@ NewEmptyDataPage(bwtree_t btree, btree_page_id_t pid, bool is_leaf)
 	page->num_keys		= 0;
 	page->keys			= NULL;
 	page->values		= NULL;
-	DeltaChainLen(page) = 0;
+	DeltaChainLen(page) = 1;
 	PrevNode(page)		= NULL;
-	LowKey(page)		= 0;
+	LowKey(page)		= NULL;
 
 	return page;
 }
@@ -119,15 +116,10 @@ NewInsertDelta(bwtree_t btree, NodeMeta *meta, DeltaNode *prev_node,
 	{
 		memcpy(delta_page->insert_key, insert_key, keysize);
 
-		if (LowKey(prev_node) == NULL ||
-			BwTreeKeyCmp(btree, insert_key, LowKey(prev_node)) < 0)
-		{
+		if (LowKey(prev_node) == NULL || BwTreeKeyCmp(btree, insert_key, LowKey(prev_node)) < 0)
 			LowKey(delta_page) = delta_page->insert_key;
-		}
 		else
-		{
 			LowKey(delta_page) = LowKey(prev_node);
-		}
 	}
 	else
 	{
@@ -193,6 +185,7 @@ NewSplitNodeDelta(bwtree_t btree, NodeMeta *meta, DeltaNode *prev_node,
 						T_BwTreeIndexSplitNodeDeltaType;
 	new_meta.delta_chain_len++;
 
+	/* For index pages, split key pushed up to parent, so exclude that from pageSize */
 	if (NodeIsIndex(right_node))
 	{
 		new_meta.pageSize -= ELEMSIZE(BwTreeKeySize(btree, split_key));
@@ -228,6 +221,10 @@ NewMergeNodeDelta(bwtree_t btree, NodeMeta *meta, DeltaNode *prev_node,
 						 T_BwTreeIndexMergeNodeDeltaType;
 	new_meta.delta_chain_len++;
 
+	/*
+	 * In index pages, merge_key is included in the new merged page,
+	 * so include sizeof merge_key also, in pagesize
+	 */
 	if (NodeIsLeaf(prev_node))
 	{
 		new_meta.nodeType = T_BwTreeLeafMergeNodeDeltaType;
@@ -278,7 +275,6 @@ AbortNodeDelta *
 NewAbortNodeDelta(bwtree_t btree, NodeMeta *meta, DeltaNode *prev_node, DeltaNode *removed_node)
 {
 	AbortNodeDelta *delta_page;
-
 
 	Assert(NodeIsIndex(prev_node));
 

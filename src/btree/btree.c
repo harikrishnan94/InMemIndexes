@@ -106,6 +106,7 @@ BwTreeGetMappingTable(bwtree_t btree)
 }
 
 
+/* Key will be copied and value will be referenced */
 bool
 btree_insert(bwtree_t btree, const void *key, const void *value)
 {
