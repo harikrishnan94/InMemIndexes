@@ -5,16 +5,12 @@
 extern "C" {
 #endif
 
+#include <common.h>
 #include <inttypes.h>
 
 struct btree_mapping_table_data_t;
 
 typedef struct btree_mapping_table_data_t *btree_mapping_table_t;
-
-
-typedef uint32_t btree_page_id_t;
-
-#define InvalidPageId ((btree_page_id_t) -1)
 
 extern btree_mapping_table_t mapping_table_create(int size);
 extern void					 mapping_table_destroy(btree_mapping_table_t mtable);

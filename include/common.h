@@ -5,6 +5,11 @@
 extern "C" {
 #endif
 
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <inttypes.h>
+
 #define CACHE_LINE_SIZE 64
 #define MAXIMUM_ALIGNOF 16
 
@@ -44,12 +49,20 @@ extern "C" {
 							 CppAsString(varname) " does not have type " CppAsString(typename)))
 
 
-#include <stdbool.h>
-#include <stddef.h>
+struct btree_data_t;
+
+typedef struct btree_data_t *bwtree_t;
+typedef uint32_t			btree_page_id_t;
 
 typedef int (*btree_key_compare_t)(const void *a1, const void *a2, void *extra_arg);
 typedef void (*btree_node_delete_t)(void *node, void *extra_arg);
 typedef int (*btree_key_size_t)(const void *key, void *extra_arg);
+
+#define Max(a, b) ((a) > (b) ? (a) : (b))
+#define Min(a, b) ((a) < (b) ? (a) : (b))
+
+#define InvalidPageId ((btree_page_id_t) -1)
+#define NullPageId	  0
 
 typedef struct
 {
@@ -58,15 +71,22 @@ typedef struct
 	void				*extra_arg;
 } btree_key_val_info_t;
 
-typedef enum
-{
-	BT_SUCCESS,
-	BT_FAILED,
-	BT_FOUND
-} btree_result_t;
+extern int BwTreeKeySize(bwtree_t btree, const void *key);
+extern int BwTreeKeyCmp(bwtree_t btree, const void *key1, const void *key2);
+extern int BwTreePageSize(bwtree_t btree);
+
+
+#ifdef ENABLE_DUMP_BTREE
+
+extern void dump_btree(bwtree_t btree);
+
+#endif
+
 
 #ifdef __cplusplus
 }
+
+
 #endif
 
 #endif /* COMMON_H */

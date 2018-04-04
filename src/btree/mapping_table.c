@@ -98,5 +98,6 @@ mapping_table_install_page_to_replace(btree_mapping_table_t mtable, btree_page_i
 									  const void *old_ptr, const void *new_ptr)
 {
 	assert(pid != InvalidPageId && pid < mtable->size);
-	return atomic_compare_exchange_strong(mtable->table + pid, &old_ptr, new_ptr);
+	atomic_compare_exchange_strong(mtable->table + pid, &old_ptr, new_ptr);
+	return true;
 }

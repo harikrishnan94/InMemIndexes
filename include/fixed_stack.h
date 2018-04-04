@@ -37,39 +37,35 @@ stack_destroy(fstack_t *stack)
 }
 
 
-#define stack_push(stack, type, data, is_stack_full) \
+#define stack_is_empty(stack) ((stack)->head == 0)
+#define stack_is_full(stack)  ((stack)->head == (stack)->max_size)
+
+#define stack_push(stack, type, data) \
 	do \
 	{ \
 		fstack_t *_stack = (stack); \
  \
-		if (_stack->head < _stack->max_size) \
-		{ \
-			((type *) _stack->stack_data)[_stack->head] = (data); \
-			_stack->head++; \
-			is_stack_full = false; \
-		} \
-		else \
-		{ \
-			is_stack_full = true; \
-		} \
+		((type *) _stack->stack_data)[_stack->head] = (data); \
+		_stack->head++; \
 	} \
 	while (0)
 
-#define stack_pop(stack, type, data, is_stack_empty) \
+#define stack_pop(stack, type, data) \
 	do \
 	{ \
 		fstack_t *_stack = (stack); \
  \
-		if (_stack->head) \
-		{ \
-			_stack->head--; \
-			(data)		   = ((type *) _stack->stack_data)[_stack->head]; \
-			is_stack_empty = false; \
-		} \
-		else \
-		{ \
-			is_stack_empty = true; \
-		} \
+		_stack->head--; \
+		(data) = ((type *) _stack->stack_data)[_stack->head]; \
+	} \
+	while (0)
+
+#define stack_peek(stack, type, data) \
+	do \
+	{ \
+		fstack_t *_stack = (stack); \
+ \
+		(data) = ((type *) _stack->stack_data)[_stack->head - 1]; \
 	} \
 	while (0)
 

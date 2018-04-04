@@ -7,6 +7,8 @@ set(SRC
   # "${SRC_PATH}/*.c"
   "${SRC_PATH}/btree/btree.c"
   "${SRC_PATH}/btree/mapping_table.c"
+  "${SRC_PATH}/btree/btree_nodes.c"
+  "${SRC_PATH}/btree/btree_node_ops.c"
 )
 
 # Set project main file.
