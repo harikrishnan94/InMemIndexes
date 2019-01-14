@@ -43,6 +43,8 @@ template class btree::concurrent_map<std::string, int, StringCompare, btree_trai
 
 TEST_CASE("BtreeConcurrentMapBasic", "[btree]")
 {
+	btree::utils::ThreadLocal::RegisterThread();
+
 	btree::concurrent_map<int, int, IntCompare, btree_small_page_traits> map;
 
 	int num_keys = 100000;
@@ -157,10 +159,13 @@ TEST_CASE("BtreeConcurrentMapBasic", "[btree]")
 		map.Insert(key, key);
 		REQUIRE((*map.lower_bound(key)).first == map.lower_bound(key)->first);
 	}
+
+	btree::utils::ThreadLocal::UnregisterThread();
 }
 
 TEST_CASE("BtreeConcurrentMapString", "[btree]")
 {
+	btree::utils::ThreadLocal::RegisterThread();
 	btree::concurrent_map<std::string, int, StringCompare, btree_traits_string_key> map;
 
 	int num_keys = 100000;
@@ -250,10 +255,13 @@ TEST_CASE("BtreeConcurrentMapString", "[btree]")
 
 	REQUIRE(map.size() == 0);
 	REQUIRE(map.Search("").has_value() == false);
+
+	btree::utils::ThreadLocal::UnregisterThread();
 }
 
 TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 {
+	btree::utils::ThreadLocal::RegisterThread();
 	btree::concurrent_map<int, int, IntCompare, btree_small_page_traits> map;
 
 	int num_operations = 1024 * 1024;
@@ -338,4 +346,6 @@ TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 	}
 
 	REQUIRE(map.size() == 0);
+
+	btree::utils::ThreadLocal::UnregisterThread();
 }

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "common.h"
+#include "utils/EpochManager.h"
 
 #include <atomic>
 #include <bitset>
@@ -994,6 +995,23 @@ private:
 	std::atomic_int m_height = 0;
 	Stats m_stats            = {};
 
+	utils::EpochManager<uint64_t, node_t> m_gc;
+
+	struct EpochGuard
+	{
+		concurrent_map *map;
+
+		EpochGuard(concurrent_map *a_map) : map(a_map)
+		{
+			map->m_gc.enter_epoch();
+		}
+
+		~EpochGuard()
+		{
+			map->m_gc.exit_epoch();
+		}
+	};
+
 	struct NodeSnapshot
 	{
 		node_t *node;
@@ -1335,7 +1353,11 @@ private:
 
 				snapshot.node->setState(
 				    snapshot.node->getState().set_deleted().increment_version());
+
+				m_gc.retire_in_current_epoch(node_t::free, snapshot.node);
 			}
+
+			m_gc.switch_epoch();
 
 			return OpResult::SUCCESS;
 		}
@@ -1577,6 +1599,7 @@ private:
 
 		while (true)
 		{
+			EpochGuard eg(this);
 			bool is_leaf_locked = get_leaf_containing(key, nss_vec);
 
 			BTREE_DEBUG_ASSERT(nss_vec.size() > 1);
@@ -1648,6 +1671,10 @@ private:
 
 				sibiling->setState(sibiling->getState().set_deleted().increment_version());
 				node->setState(node->getState().set_deleted().increment_version());
+
+				m_gc.retire_in_current_epoch(node_t::free, sibiling);
+				m_gc.retire_in_current_epoch(node_t::free, node);
+				m_gc.switch_epoch();
 			}
 		}
 
@@ -1922,6 +1949,7 @@ public:
 	{
 		while (true)
 		{
+			EpochGuard eg(this);
 			NodeSnapshot leaf_snapshot = get_leaf_containing(key);
 
 			if (leaf_snapshot.node == nullptr)
@@ -1942,6 +1970,7 @@ public:
 
 		while (true)
 		{
+			EpochGuard eg(this);
 			NodeSnapshot leaf_snapshot = get_leaf_containing(key);
 
 			if (leaf_snapshot.node)
@@ -1976,6 +2005,7 @@ public:
 
 		while (true)
 		{
+			EpochGuard eg(this);
 			bool is_leaf_locked = get_leaf_containing(key, nss_vec);
 
 			if (nss_vec.size() > 1)

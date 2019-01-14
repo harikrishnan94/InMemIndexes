@@ -30,6 +30,7 @@ struct IntCompare : std::binary_function<long, long, int>
 static void
 BM_BtreeInsert(benchmark::State &state)
 {
+	btree::utils::ThreadLocal::RegisterThread();
 	btree::concurrent_map<long, long, IntCompare> map;
 	long ind = 0;
 
@@ -44,11 +45,15 @@ BM_BtreeInsert(benchmark::State &state)
 		if (ind == state.range(0))
 			ind = 0;
 	}
+
+	btree::utils::ThreadLocal::UnregisterThread();
 }
 
 static void
 BM_BtreeSearch(benchmark::State &state)
 {
+	btree::utils::ThreadLocal::RegisterThread();
+
 	long ind        = 0;
 	static auto map = []() {
 		btree::concurrent_map<long, long, IntCompare> map;
@@ -72,6 +77,8 @@ BM_BtreeSearch(benchmark::State &state)
 		if (ind == state.range(0))
 			ind = 0;
 	}
+
+	btree::utils::ThreadLocal::UnregisterThread();
 }
 
 BENCHMARK(BM_BtreeInsert)->RangeMultiplier(4)->Range(1024, MAXSIZE);

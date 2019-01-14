@@ -66,6 +66,8 @@ hasher(uint64_t k)
 static void
 insert_values(std::string dist, Map &map, int64_t rowcount)
 {
+	btree::utils::ThreadLocal::RegisterThread();
+
 	ycsbc::ZipfianGenerator zgenerator{ 0, static_cast<uint64_t>(rowcount) };
 	ycsbc::UniformGenerator ugenerator{ 0, static_cast<uint64_t>(rowcount) }; // TODO
 
@@ -96,6 +98,8 @@ insert_values(std::string dist, Map &map, int64_t rowcount)
 		map.Insert(key, hasher(key));
 		rowcount--;
 	}
+
+	btree::utils::ThreadLocal::UnregisterThread();
 }
 
 static void
@@ -109,6 +113,8 @@ worker(std::promise<uint64_t> result,
        int delete_p,
        int update_p)
 {
+	btree::utils::ThreadLocal::RegisterThread();
+
 	enum Oper
 	{
 		READ,
@@ -193,6 +199,8 @@ worker(std::promise<uint64_t> result,
 	}
 
 	result.set_value(num_successful_ops);
+
+	btree::utils::ThreadLocal::UnregisterThread();
 }
 
 static void
