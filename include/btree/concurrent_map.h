@@ -1611,56 +1611,41 @@ private:
 		return MergeInfo{ parent->get_key_value(pos)->first, pos - 1 };
 	}
 
-	// TODO: Fix data race
 	template <typename Node>
 	void
-	merge_node(int node_ss, NodeSnapshotVector &nss_vec, const Key &key)
+	merge_node(int node_ss, const NodeSnapshotVector &nss_vec, const Key &key)
 	{
 		if (node_ss == 1)
 			return;
 
-		NodeSnapshot &node_snapshot   = nss_vec.snapshots[node_ss];
-		NodeSnapshot &parent_snapshot = nss_vec.snapshots[node_ss - 1];
-		Node *node                    = static_cast<Node *>(node_snapshot.node);
-		inner_node_t *parent          = static_cast<inner_node_t *>(parent_snapshot.node);
+		const NodeSnapshot &node_snapshot   = nss_vec.snapshots[node_ss];
+		const NodeSnapshot &parent_snapshot = nss_vec.snapshots[node_ss - 1];
+		Node *node                          = static_cast<Node *>(node_snapshot.node);
+		inner_node_t *parent                = static_cast<inner_node_t *>(parent_snapshot.node);
 
-		if (lock_node_or_restart<OPTIMISTIC_LOCKING>(parent, parent_snapshot.state))
-			return;
+		std::optional<MergeInfo> mergeinfo = get_merge_info(node, parent, key);
 
-		while (true)
+		if (mergeinfo)
 		{
-			std::optional<MergeInfo> mergeinfo = get_merge_info(node, parent, key);
+			MutexLockType parent_lock{ parent->mutex };
 
-			if (mergeinfo)
+			if (is_snapshot_stale(parent_snapshot))
+				return;
+
+			const Key &merge_key = mergeinfo->merge_key;
+			int sibilingpos      = mergeinfo->sibilingpos;
+			Node *sibiling       = static_cast<Node *>(parent->get_child(sibilingpos));
+
+			MutexLockType sibiling_lock{ sibiling->mutex };
+			MutexLockType node_lock{ node->mutex };
+
+			if (is_snapshot_stale(node_snapshot))
+				return;
+
+			Node *mergednode = sibiling->merge(node, merge_key);
+
+			if (mergednode)
 			{
-				const Key &merge_key = mergeinfo->merge_key;
-				int sibilingpos      = mergeinfo->sibilingpos;
-				Node *sibiling       = static_cast<Node *>(parent->get_child(sibilingpos));
-				NodeSnapshot sibiling_snapshot{ sibiling, {} };
-
-				if (lock_node_or_restart<OPTIMISTIC_LOCKING>(sibiling, sibiling_snapshot.state)
-				    || lock_node_or_restart<OPTIMISTIC_LOCKING>(node, node_snapshot.state)
-				    || is_snapshot_stale(parent_snapshot))
-				{
-					return;
-				}
-
-				Node *mergednode = sibiling->merge(node, merge_key);
-
-				if (mergednode == nullptr)
-					return;
-
-				MutexLockType parent_lock{ parent->mutex };
-				MutexLockType sibiling_lock{ sibiling->mutex };
-				MutexLockType node_lock{ node->mutex };
-
-				if (is_snapshot_stale(parent_snapshot) || is_snapshot_stale(sibiling_snapshot)
-				    || is_snapshot_stale(node_snapshot))
-				{
-					delete mergednode;
-					return;
-				}
-
 				BTREE_UPDATE_STAT_NODE_BASED(merge);
 
 				parent->update_inner_for_merge(sibilingpos, mergednode);
@@ -1668,8 +1653,6 @@ private:
 				sibiling->setState(sibiling->getState().set_deleted().increment_version());
 				node->setState(node->getState().set_deleted().increment_version());
 			}
-
-			break;
 		}
 
 		if (parent->isUnderfull())

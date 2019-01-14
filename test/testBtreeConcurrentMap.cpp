@@ -268,6 +268,7 @@ TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 	std::mt19937 rnd(seed);
 
 	std::uniform_int_distribution<int> key_dist{ 1, cardinality };
+	std::uniform_int_distribution<int> val_dist;
 	std::uniform_int_distribution<decltype(INSERT_OP)> op_dist{ INSERT_OP, DELETE_OP };
 
 	std::map<int, int> key_values;
@@ -282,7 +283,7 @@ TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 		{
 			case INSERT_OP:
 			{
-				val = key * key_dist(rnd);
+				val = val_dist(rnd);
 
 				if (key_values.count(key))
 				{
