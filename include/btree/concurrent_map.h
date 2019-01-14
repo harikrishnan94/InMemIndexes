@@ -681,26 +681,6 @@ private:
 			store_relaxed(this->logical_pagesize, logical_pagesize);
 		}
 
-		std::optional<Value>
-		remove(const Key &key)
-		{
-			int pos;
-			bool found;
-
-			std::tie(pos, found) = lower_bound(key);
-
-			if (found)
-			{
-				auto val = std::optional{ get_key_value(pos)->second };
-
-				remove_pos(pos);
-
-				return val;
-			}
-
-			return {};
-		}
-
 		// Must be called with this's mutex held
 		INNER_ONLY inline void
 		update_inner_for_trim(const Key &key, value_t child)

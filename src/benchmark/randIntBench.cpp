@@ -142,7 +142,7 @@ worker(std::promise<uint64_t> result,
 
 	std::random_device rd;
 	std::mt19937_64 gen{ rd() }; // Standard mersenne_twister_engine seeded with rd()
-	std::uniform_int_distribution<int> opdis(0, 100);
+	std::uniform_int_distribution<int> opdis(0, 99);
 	uint64_t num_successful_ops = 0;
 	constexpr int BATCH         = 100;
 
