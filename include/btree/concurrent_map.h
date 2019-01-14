@@ -390,10 +390,19 @@ private:
 		}
 
 		INNER_ONLY
+		inline std::atomic<value_t> *
+		get_child_ptr(int slot) const
+		{
+			return slot == 0
+			           ? reinterpret_cast<std::atomic<value_t> *>(&get_key_value(0)->first)
+			           : reinterpret_cast<std::atomic<value_t> *>(&get_key_value(slot)->second);
+		}
+
+		INNER_ONLY
 		inline value_t
 		get_child(int slot) const
 		{
-			return slot == 0 ? get_first_child() : get_key_value(slot)->second;
+			return get_child_ptr(slot)->load();
 		}
 
 		inline const Key &
@@ -409,7 +418,7 @@ private:
 		inline value_t
 		get_first_child() const
 		{
-			return *reinterpret_cast<value_t *>(&get_key_value(0)->first);
+			return get_child_ptr(0)->load();
 		}
 
 		INNER_ONLY
@@ -418,7 +427,7 @@ private:
 		{
 			int slot = this->num_values - 1;
 
-			return slot == 0 ? get_first_child() : get_key_value(slot)->second;
+			return get_child(slot);
 		}
 
 		// Node search helpers
@@ -682,18 +691,6 @@ private:
 		}
 
 		// Must be called with this's mutex held
-		INNER_ONLY inline void
-		update_inner_for_trim(const Key &key, value_t child)
-		{
-			int pos = search_inner(key);
-
-			value_t &oldchild = pos ? get_key_value(pos)->second
-			                        : *reinterpret_cast<value_t *>(&get_key_value(0)->first);
-
-			atomic_node_update([&]() { oldchild = child; });
-		}
-
-		// Must be called with this's mutex held
 		LEAF_ONLY
 		inline std::optional<value_t>
 		update_leaf(const Key &key, const value_t &new_value)
@@ -720,6 +717,17 @@ private:
 		}
 
 		// Must be called with this's mutex held
+		INNER_ONLY inline void
+		update_inner_for_trim(const Key &key, value_t child)
+		{
+			int pos = search_inner(key);
+
+			std::atomic<value_t> *oldchild = get_child_ptr(pos);
+
+			atomic_node_update([&]() { oldchild->store(child, std::memory_order_release); });
+		}
+
+		// Must be called with this's mutex held
 		INNER_ONLY
 		inline InsertStatus
 		update_inner_for_split(const NodeSplitInfo &splitinfo)
@@ -739,14 +747,12 @@ private:
 				BTREE_DEBUG_ASSERT(found == false);
 				BTREE_DEBUG_ONLY(found);
 
-				value_t &old_child = split_pos - 1
-				                         ? get_key_value(split_pos - 1)->second
-				                         : *reinterpret_cast<value_t *>(&get_key_value(0)->first);
+				std::atomic<value_t> *old_child = get_child_ptr(split_pos - 1);
 
 				new (this->opaque() + current_value_offset) key_value_t{ split_key, right_child };
 
 				atomic_node_update([&]() {
-					old_child = left_child;
+					old_child->store(left_child, std::memory_order_release);
 					insert_into_slot(split_pos, current_value_offset);
 				});
 
@@ -763,10 +769,9 @@ private:
 		inline void
 		update_inner_for_merge(int merged_pos, value_t merged_child)
 		{
-			std::atomic_int *slots = this->get_slots();
-			int deleted_pos        = merged_pos + 1;
-			value_t &oldval        = merged_pos ? get_key_value(merged_pos)->second
-			                             : *reinterpret_cast<value_t *>(&get_key_value(0)->first);
+			std::atomic_int *slots          = this->get_slots();
+			int deleted_pos                 = merged_pos + 1;
+			std::atomic<value_t> *old_child = get_child_ptr(merged_pos);
 
 			atomic_node_update([&]() {
 				int num_values = this->num_values;
@@ -774,7 +779,7 @@ private:
 				copy(slots, deleted_pos + 1, num_values, deleted_pos);
 				this->num_values.store(num_values - 1, std::memory_order_release);
 
-				oldval = merged_child;
+				old_child->store(merged_child, std::memory_order_release);
 			});
 
 			this->incrementNumDeadValues();
