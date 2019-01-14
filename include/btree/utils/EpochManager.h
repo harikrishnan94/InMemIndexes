@@ -50,7 +50,7 @@ public:
 	inline void
 	enter_epoch()
 	{
-		m_local_epoch[ThreadLocal::ThreadID()] = now();
+		m_local_epoch[ThreadLocal::ThreadID()].epoch = now();
 	}
 
 	// exit_epoch marks quiescent state of the calling thread.
@@ -58,7 +58,8 @@ public:
 	inline void
 	exit_epoch()
 	{
-		m_local_epoch[ThreadLocal::ThreadID()].store(QUIESCENT_STATE, std::memory_order_release);
+		m_local_epoch[ThreadLocal::ThreadID()].epoch.store(QUIESCENT_STATE,
+		                                                   std::memory_order_release);
 	}
 
 	// Switch to new epoch and return old epoch
@@ -72,7 +73,7 @@ public:
 	inline epoch_t
 	my_epoch()
 	{
-		return m_local_epoch[ThreadLocal::ThreadID()].load(std::memory_order_relaxed);
+		return m_local_epoch[ThreadLocal::ThreadID()].epoch.load(std::memory_order_relaxed);
 	}
 
 	// Return current epoch
@@ -172,7 +173,7 @@ public:
 	    , m_retire_list{}
 	{
 		for (int i = 0; i < ThreadLocal::MAX_THREADS; i++)
-			m_local_epoch[i].store(QUIESCENT_STATE, std::memory_order_relaxed);
+			m_local_epoch[i].epoch.store(QUIESCENT_STATE, std::memory_order_relaxed);
 	}
 
 	EpochManager(const EpochManager &) = delete;
@@ -213,9 +214,12 @@ private:
 	epoch_t
 	get_min_used_epoch()
 	{
-		return *std::min_element(std::begin(m_local_epoch),
-		                         std::begin(m_local_epoch) + ThreadLocal::MaxThreadID() + 1,
-		                         [](const auto &a, const auto &b) { return a.load() < b.load(); });
+		return std::min_element(std::begin(m_local_epoch),
+		                        std::begin(m_local_epoch) + ThreadLocal::MaxThreadID() + 1,
+		                        [](const auto &a, const auto &b) {
+			                        return a.epoch.load() < b.epoch.load();
+		                        })
+		    ->epoch;
 	}
 
 	void
@@ -241,9 +245,14 @@ private:
 	// Quiescent state
 	const epoch_t QUIESCENT_STATE = std::numeric_limits<epoch_t>::max();
 
+	struct alignas(128) AlignedAtomicEpoch
+	{
+		std::atomic<epoch_t> epoch;
+	};
+
 	// Thread local epoch, denotes the epoch of each thread.
 	// Accessed using `slot` by each thread.
-	std::array<std::atomic<epoch_t>, ThreadLocal::MAX_THREADS> m_local_epoch;
+	std::array<AlignedAtomicEpoch, ThreadLocal::MAX_THREADS> m_local_epoch;
 
 	// Thread local retire list. Accessed using `slot` by each thread.
 	std::array<std::deque<Retiree>, ThreadLocal::MAX_THREADS> m_retire_list;
