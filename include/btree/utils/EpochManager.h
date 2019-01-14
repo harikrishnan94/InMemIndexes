@@ -169,8 +169,8 @@ public:
 	EpochManager()
 	    : m_reclaimation_threshold{ ReclamationThreshold }
 	    , m_global_epoch{ 0 }
-	    , m_local_epoch{}
-	    , m_retire_list{}
+	    , m_local_epoch(ThreadLocal::MAX_THREADS)
+	    , m_retire_list(ThreadLocal::MAX_THREADS)
 	{
 		for (int i = 0; i < ThreadLocal::MAX_THREADS; i++)
 			m_local_epoch[i].epoch.store(QUIESCENT_STATE, std::memory_order_relaxed);
@@ -243,7 +243,7 @@ private:
 	std::atomic<epoch_t> m_global_epoch;
 
 	// Quiescent state
-	const epoch_t QUIESCENT_STATE = std::numeric_limits<epoch_t>::max();
+	static constexpr epoch_t QUIESCENT_STATE = std::numeric_limits<epoch_t>::max();
 
 	struct alignas(128) AlignedAtomicEpoch
 	{
@@ -252,9 +252,9 @@ private:
 
 	// Thread local epoch, denotes the epoch of each thread.
 	// Accessed using `slot` by each thread.
-	std::array<AlignedAtomicEpoch, ThreadLocal::MAX_THREADS> m_local_epoch;
+	std::vector<AlignedAtomicEpoch> m_local_epoch;
 
 	// Thread local retire list. Accessed using `slot` by each thread.
-	std::array<std::deque<Retiree>, ThreadLocal::MAX_THREADS> m_retire_list;
+	std::vector<std::deque<Retiree>> m_retire_list;
 };
 } // namespace btree::utils
