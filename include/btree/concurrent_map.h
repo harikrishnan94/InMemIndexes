@@ -53,6 +53,20 @@ private:
 		return compare(k1, k2) == 0;
 	}
 
+	template <typename T>
+	static inline void
+	store_relaxed(std::atomic<T> &atomicvar, T newval)
+	{
+		atomicvar.store(newval, std::memory_order_relaxed);
+	}
+
+	template <typename T>
+	static inline T
+	load_relaxed(const std::atomic<T> &atomicvar)
+	{
+		return atomicvar.load();
+	}
+
 	using MutexLockType = std::lock_guard<std::mutex>;
 
 	enum class NodeType : int8_t
@@ -163,12 +177,12 @@ private:
 		// concurrent updaters might overwrite slots which can be read by readers,
 		// with key/value data.
 
-		int logical_pagesize  = 0;
-		int next_slot_offset  = 0;
-		int max_slot_offset   = 0;
-		int last_value_offset = Traits::NODE_SIZE;
+		std::atomic_int logical_pagesize = 0;
+		std::atomic_int next_slot_offset = 0;
+		std::atomic_int max_slot_offset  = 0;
+		int last_value_offset            = Traits::NODE_SIZE;
 
-		int8_t num_dead_values = 0;
+		std::atomic_int8_t num_dead_values = 0;
 		const NodeType node_type;
 		const int height;
 
@@ -217,7 +231,10 @@ private:
 		inline void
 		incrementNumDeadValues()
 		{
-			num_dead_values = num_dead_values > 1 ? num_dead_values : num_dead_values + 1;
+			int8_t num_dead_values = load_relaxed(this->num_dead_values);
+
+			store_relaxed<int8_t>(this->num_dead_values,
+			                      num_dead_values > 1 ? num_dead_values : num_dead_values + 1);
 		}
 
 		inline bool
@@ -243,7 +260,7 @@ private:
 		inline bool
 		canTrim() const
 		{
-			return num_dead_values > 1;
+			return load_relaxed(num_dead_values) > 1;
 		}
 
 		inline bool
@@ -328,16 +345,22 @@ private:
 		inline bool
 		haveEnoughSpace() const
 		{
-			return ((this->next_slot_offset + sizeof(int))
+			int next_slot_offset = load_relaxed(this->next_slot_offset);
+			int max_slot_offset  = load_relaxed(this->max_slot_offset);
+
+			return ((next_slot_offset + sizeof(int))
 			        <= (this->last_value_offset - sizeof(key_value_t)))
-			       && (this->max_slot_offset <= (this->last_value_offset - sizeof(key_value_t)));
+			       && (max_slot_offset <= (this->last_value_offset - sizeof(key_value_t)));
 		}
 
 		// Must be called with both this's and other's mutex held
 		inline bool
 		canMerge(const node_t *other) const
 		{
-			return (this->logical_pagesize + other->logical_pagesize
+			int logical_pagesize       = load_relaxed(this->logical_pagesize);
+			int other_logical_pagesize = load_relaxed(other->logical_pagesize);
+
+			return (logical_pagesize + other_logical_pagesize
 			        + (IsInner() ? sizeof(key_value_t) : 0))
 			           + sizeof(inherited_node_t)
 			       <= Traits::NODE_SIZE;
@@ -489,12 +512,17 @@ private:
 		inline void
 		update_meta_after_insert()
 		{
-			this->last_value_offset -= sizeof(key_value_t);
-			this->next_slot_offset += sizeof(int);
-			this->logical_pagesize += sizeof(key_value_t) + sizeof(int);
-			this->max_slot_offset = std::max(this->max_slot_offset, this->next_slot_offset);
+			int next_slot_offset = load_relaxed(this->next_slot_offset) + sizeof(int);
+			int logical_pagesize =
+			    load_relaxed(this->logical_pagesize) + sizeof(key_value_t) + sizeof(int);
+			int max_slot_offset = std::max(load_relaxed(this->max_slot_offset), next_slot_offset);
 
-			BTREE_DEBUG_ASSERT(this->next_slot_offset <= this->last_value_offset);
+			this->last_value_offset -= sizeof(key_value_t);
+			store_relaxed(this->next_slot_offset, next_slot_offset);
+			store_relaxed(this->logical_pagesize, logical_pagesize);
+			store_relaxed(this->max_slot_offset, max_slot_offset);
+
+			BTREE_DEBUG_ASSERT(next_slot_offset <= this->last_value_offset);
 		}
 
 		// Must be called with this's mutex held
@@ -644,9 +672,13 @@ private:
 				this->num_values.store(num_values - 1, std::memory_order_release);
 			});
 
+			int next_slot_offset = load_relaxed(this->next_slot_offset) - sizeof(int);
+			int logical_pagesize =
+			    load_relaxed(this->logical_pagesize) - (sizeof(key_value_t) + sizeof(int));
+
 			this->incrementNumDeadValues();
-			this->next_slot_offset -= sizeof(int);
-			this->logical_pagesize -= sizeof(key_value_t) + sizeof(int);
+			store_relaxed(this->next_slot_offset, next_slot_offset);
+			store_relaxed(this->logical_pagesize, logical_pagesize);
 		}
 
 		std::optional<Value>
@@ -1335,15 +1367,25 @@ private:
 	std::pair<OpResult, NodeSplitInfo>
 	split_node(int node_ss, const NodeSnapshotVector &nss_vec, NodeSplitInfo &prev_split_info)
 	{
-		Node *node                          = static_cast<Node *>(nss_vec.snapshots[node_ss].node);
+		const NodeSnapshot &node_snapshot   = nss_vec.snapshots[node_ss];
 		const NodeSnapshot &parent_snapshot = nss_vec.snapshots[node_ss - 1];
+		Node *node                          = static_cast<Node *>(node_snapshot.node);
 		inner_node_t *parent                = static_cast<inner_node_t *>(parent_snapshot.node);
+		NodeSplitInfo splitinfo;
 
-		NodeSplitInfo splitinfo = node->split();
-		MutexLockType lock{ parent ? parent->mutex : *m_root_mutex };
+		MutexLockType parentlock{ parent ? parent->mutex : *m_root_mutex };
 
 		if (is_snapshot_stale(parent_snapshot))
 			return { OpResult::STALE_SNAPSHOT, {} };
+
+		{
+			MutexLockType lock{ node->mutex };
+
+			if (is_snapshot_stale(node_snapshot))
+				return { OpResult::STALE_SNAPSHOT, {} };
+
+			splitinfo = node->split();
+		}
 
 		BTREE_UPDATE_STAT_NODE_BASED(split);
 
@@ -1377,17 +1419,24 @@ private:
 	          const NodeSnapshotVector &nss_vec,
 	          NodeSplitInfo &prev_split_info)
 	{
-		Node *node                          = static_cast<Node *>(nss_vec.snapshots[node_ss].node);
+		const NodeSnapshot &node_snapshot   = nss_vec.snapshots[node_ss];
 		const NodeSnapshot &parent_snapshot = nss_vec.snapshots[node_ss - 1];
+		Node *node                          = static_cast<Node *>(node_snapshot.node);
 		inner_node_t *parent                = static_cast<inner_node_t *>(parent_snapshot.node);
-		Node *trimmed_node                  = node->trim();
+		Node *trimmed_node;
 
 		MutexLockType lock{ parent ? parent->mutex : *m_root_mutex };
 
 		if (is_snapshot_stale(parent_snapshot))
-		{
-			delete trimmed_node;
 			return OpResult::STALE_SNAPSHOT;
+
+		{
+			MutexLockType lock{ node->mutex };
+
+			if (is_snapshot_stale(node_snapshot))
+				return OpResult::STALE_SNAPSHOT;
+
+			trimmed_node = node->trim();
 		}
 
 		BTREE_UPDATE_STAT_NODE_BASED(trim);
@@ -1577,6 +1626,7 @@ private:
 		return MergeInfo{ parent->get_key_value(pos)->first, pos - 1 };
 	}
 
+	// TODO: Fix data race
 	template <typename Node>
 	void
 	merge_node(int node_ss, NodeSnapshotVector &nss_vec, const Key &key)
