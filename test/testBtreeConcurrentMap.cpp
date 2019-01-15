@@ -28,13 +28,13 @@ struct StringCompare : std::binary_function<std::string, std::string, int>
 
 struct btree_small_page_traits : btree::btree_traits_debug
 {
-	static constexpr int NODE_SIZE            = 200;
+	static constexpr int NODE_SIZE            = 256;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
 };
 
 struct btree_traits_string_key : btree::btree_traits_debug
 {
-	static constexpr int NODE_SIZE            = 312;
+	static constexpr int NODE_SIZE            = 384;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
 };
 

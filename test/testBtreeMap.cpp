@@ -10,13 +10,13 @@
 
 struct btree_small_page_traits : btree::btree_traits_debug
 {
-	static constexpr int NODE_SIZE            = 128;
+	static constexpr int NODE_SIZE            = 192;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
 };
 
 struct btree_traits_string_key : btree::btree_traits_debug
 {
-	static constexpr int NODE_SIZE = 248;
+	static constexpr int NODE_SIZE = 320;
 };
 
 template class btree::map<int, int, btree_small_page_traits>;
