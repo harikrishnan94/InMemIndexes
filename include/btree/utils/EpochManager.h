@@ -130,7 +130,7 @@ public:
 		auto begin        = std::begin(retire_list);
 		auto reclaim_upto = begin;
 
-		for (auto &retiree : retire_list)
+		for (const auto &retiree : retire_list)
 		{
 			if (!retiree.can_reclaim(min_used_epoch))
 				break;
@@ -197,7 +197,7 @@ private:
 
 		// Can reclaim this object after the given `epoch`
 		bool
-		can_reclaim(epoch_t epoch)
+		can_reclaim(epoch_t epoch) const
 		{
 			return epoch > m_retired_epoch;
 		}
