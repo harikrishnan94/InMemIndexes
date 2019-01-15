@@ -18,7 +18,7 @@ static const std::unique_ptr<long[]> keys = []() {
 	return keys;
 }();
 
-struct IntCompare : std::binary_function<long, long, int>
+struct IntCompare
 {
 	inline int
 	operator()(long a, long b) const

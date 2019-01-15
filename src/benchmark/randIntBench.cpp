@@ -39,7 +39,7 @@ struct btree_big_page_traits : btree::btree_traits_default
 	static constexpr int NODE_SIZE = 4 * 1024;
 };
 
-struct LongCompare : std::binary_function<long, long, int>
+struct LongCompare
 {
 	int
 	operator()(int a, int b) const

@@ -8,7 +8,7 @@
 #include <random>
 #include <string>
 
-struct IntCompare : std::binary_function<int, int, int>
+struct IntCompare
 {
 	int
 	operator()(int a, int b) const
@@ -17,7 +17,7 @@ struct IntCompare : std::binary_function<int, int, int>
 	}
 };
 
-struct StringCompare : std::binary_function<std::string, std::string, int>
+struct StringCompare
 {
 	int
 	operator()(const std::string &a, const std::string &b) const

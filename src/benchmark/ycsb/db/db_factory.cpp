@@ -29,7 +29,7 @@ template <typename Key,
           typename GrowthPolicy = tsl::rh::power_of_two_growth_policy<2>>
 using robin_map = tsl::robin_map<Key, T, Hash, KeyEqual, Allocator, false, GrowthPolicy>;
 
-struct StringCompare : std::binary_function<std::string, std::string, int>
+struct StringCompare
 {
 	int
 	operator()(const std::string &a, const std::string &b) const
