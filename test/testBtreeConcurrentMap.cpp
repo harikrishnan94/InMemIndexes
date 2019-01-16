@@ -2,11 +2,15 @@
 #include "sha512.h"
 
 #include <catch.hpp>
+#include <gsl/span>
+#include <tsl/robin_set.h>
 
 #include <limits>
 #include <map>
 #include <random>
 #include <string>
+#include <thread>
+#include <vector>
 
 struct IntCompare
 {
@@ -26,6 +30,15 @@ struct StringCompare
 	}
 };
 
+struct LongCompare
+{
+	int
+	operator()(const long &a, const long &b) const
+	{
+		return (a < b) ? -1 : (a > b);
+	}
+};
+
 struct btree_small_page_traits : btree::btree_traits_debug
 {
 	static constexpr int NODE_SIZE            = 256;
@@ -36,6 +49,13 @@ struct btree_traits_string_key : btree::btree_traits_debug
 {
 	static constexpr int NODE_SIZE            = 384;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
+};
+
+struct btree_medium_page_traits : btree::btree_traits_default
+{
+	static constexpr int NODE_SIZE            = 384;
+	static constexpr int NODE_MERGE_THRESHOLD = 50;
+	static constexpr bool STAT                = true;
 };
 
 template class btree::concurrent_map<int, int, IntCompare, btree_small_page_traits>;
@@ -346,6 +366,157 @@ TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 	}
 
 	REQUIRE(map.size() == 0);
+
+	btree::utils::ThreadLocal::UnregisterThread();
+}
+
+static std::vector<long>
+generateUniqueValues(int size)
+{
+	std::vector<long> vals;
+	std::random_device rd;
+	std::mt19937_64 gen{ rd() };
+	std::uniform_int_distribution<long> dist(0, size - 1);
+	tsl::robin_set<long> used_vals;
+
+	used_vals.reserve(size);
+	vals.reserve(size);
+
+	for (int i = 0; i < size; i++)
+	{
+		long val;
+
+		do
+		{
+			val = dist(gen);
+		} while (used_vals.count(val));
+
+		used_vals.insert(val);
+		vals.emplace_back(val);
+	}
+
+	return vals;
+}
+
+static void
+insert_worker(btree::concurrent_map<long, long, LongCompare, btree_medium_page_traits> &map,
+              gsl::span<long> vals)
+{
+	btree::utils::ThreadLocal::RegisterThread();
+
+	for (auto val : vals)
+	{
+		map.Insert(val, val);
+	}
+
+	btree::utils::ThreadLocal::UnregisterThread();
+}
+
+enum class OpType
+{
+	INSERT,
+	DELETE,
+	DELETE_AND_INSERT
+};
+
+static void
+delete_worker(btree::concurrent_map<long, long, LongCompare, btree_medium_page_traits> &map,
+              gsl::span<long> vals,
+              OpType op)
+{
+	btree::utils::ThreadLocal::RegisterThread();
+
+	for (auto val : vals)
+	{
+		switch (op)
+		{
+			case OpType::DELETE:
+				map.Delete(val);
+				break;
+
+			case OpType::INSERT:
+				map.Insert(val, val);
+				break;
+
+			case OpType::DELETE_AND_INSERT:
+				map.Delete(val);
+				map.Insert(val, val);
+				break;
+		}
+	}
+
+	btree::utils::ThreadLocal::UnregisterThread();
+}
+
+TEST_CASE("BtreeConcurrentMapConcurrency", "[btree]")
+{
+	btree::concurrent_map<long, long, LongCompare, btree_medium_page_traits> map;
+	constexpr int PER_THREAD_OP_COUNT = 256 * 1024;
+	constexpr int NUM_THREADS         = 4;
+	std::vector<long> vals            = generateUniqueValues(NUM_THREADS * PER_THREAD_OP_COUNT);
+
+	btree::utils::ThreadLocal::RegisterThread();
+
+	auto run_test = [&](OpType op) {
+		std::vector<std::thread> workers;
+		int startval = 0;
+		int quantum  = vals.size() / NUM_THREADS;
+
+		for (int i = 0; i < NUM_THREADS; i++)
+		{
+			if (op == OpType::INSERT)
+			{
+				workers.emplace_back(insert_worker,
+				                     std::ref(map),
+				                     gsl::span<long>{ vals.data() + startval, quantum });
+			}
+			else
+			{
+				workers.emplace_back(delete_worker,
+				                     std::ref(map),
+				                     gsl::span<long>{ vals.data() + startval, quantum },
+				                     op);
+			}
+
+			startval += quantum;
+		}
+
+		for (auto &worker : workers)
+		{
+			worker.join();
+		}
+	};
+
+	// Insert check
+	{
+		run_test(OpType::INSERT);
+
+		REQUIRE(map.size() == vals.size());
+
+		for (auto val : vals)
+		{
+			REQUIRE(*map.Search(val) == val);
+		}
+	}
+
+	// Delete And Insert check
+	{
+		run_test(OpType::DELETE_AND_INSERT);
+
+		for (auto val : vals)
+		{
+			REQUIRE(*map.Search(val) == val);
+		}
+
+		REQUIRE(map.size() == vals.size());
+	}
+
+	// Delete check
+	{
+		run_test(OpType::DELETE);
+
+		REQUIRE(map.size() == 0);
+	}
 
 	btree::utils::ThreadLocal::UnregisterThread();
 }

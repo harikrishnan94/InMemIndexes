@@ -560,10 +560,10 @@ private:
 	static_assert(sizeof(inner_node_t) % alignof(typename inner_node_t::key_value_t) == 0,
 	              "Alignment mismatch b/w pagesize and Key, Value");
 
-	node_t *m_root    = nullptr;
-	std::size_t count = 0;
-	int m_height      = 0;
-	Stats m_stats     = {};
+	node_t *m_root                 = nullptr;
+	std::size_t count              = 0;
+	int m_height                   = 0;
+	std::unique_ptr<Stats> m_stats = std::make_unique<Stats>();
 
 	template <typename Node>
 	inline void
@@ -1267,7 +1267,7 @@ public:
 	inline const Stats &
 	stats() const
 	{
-		return m_stats;
+		return *m_stats;
 	}
 
 	~map()

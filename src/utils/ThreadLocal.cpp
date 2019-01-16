@@ -55,17 +55,18 @@ ThreadLocal::RegisterThread()
 void
 ThreadLocal::UnregisterThread()
 {
-	assert(tid != -1);
+	if (tid != -1)
+	{
+		std::lock_guard<std::mutex> lock{ tid_gen_mutex };
 
-	std::lock_guard<std::mutex> lock{ tid_gen_mutex };
+		free_tids.insert(tid);
+		inuse_tids.erase(tid);
 
-	free_tids.insert(tid);
-	inuse_tids.erase(tid);
+		tid          = -1;
+		max_used_tid = inuse_tids.size() ? *std::rbegin(inuse_tids) : -1;
 
-	tid          = -1;
-	max_used_tid = inuse_tids.size() ? *std::rbegin(inuse_tids) : -1;
-
-	num_registerd_threads--;
+		num_registerd_threads--;
+	}
 }
 
 int

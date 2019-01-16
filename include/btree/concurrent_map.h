@@ -992,8 +992,8 @@ private:
 	std::atomic<nodestate_t> m_root_state    = {};
 	std::atomic<node_t *> m_root             = nullptr;
 
-	std::atomic_int m_height = 0;
-	mutable Stats m_stats    = {};
+	std::atomic_int m_height       = 0;
+	std::unique_ptr<Stats> m_stats = std::make_unique<Stats>();
 
 	utils::EpochManager<uint64_t, node_t> m_gc;
 
@@ -1936,7 +1936,7 @@ public:
 	    , m_root_state(moved.m_root_state.load())
 	    , m_root(moved.m_root.load())
 	    , m_height(moved.m_height.load())
-	    , m_stats(std::move(moved.m_stats))
+	    , m_stats()
 	{
 		moved.m_root_state.store({});
 		moved.m_root.store(nullptr);
@@ -2381,7 +2381,7 @@ public:
 	inline std::size_t
 	size() const
 	{
-		return m_stats.num_elements;
+		return m_stats->num_elements;
 	}
 
 	template <typename Dummy = void, typename = std::enable_if_t<Traits::STAT, Dummy>>

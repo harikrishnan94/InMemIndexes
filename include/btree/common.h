@@ -41,13 +41,13 @@
 			BTREE_UPDATE_STAT(CONCAT(leaf_, stat), ++);  \
 	} while (0)
 
-#define BTREE_UPDATE_STAT(stat, op)                         \
-	do                                                      \
-	{                                                       \
-		if constexpr (Traits::STAT)                         \
-		{                                                   \
-			this->m_stats.CONCAT(CONCAT(num_, stat), s) op; \
-		}                                                   \
+#define BTREE_UPDATE_STAT(stat, op)                          \
+	do                                                       \
+	{                                                        \
+		if constexpr (Traits::STAT)                          \
+		{                                                    \
+			this->m_stats->CONCAT(CONCAT(num_, stat), s) op; \
+		}                                                    \
 	} while (0)
 
 #define ASLEAF(n) static_cast<leaf_node_t *>(n)
@@ -75,17 +75,17 @@ struct btree_traits_debug : btree_traits_default
 
 struct btree_stats_t
 {
-	std::size_t num_elements;
-	std::size_t num_leaf_splits;
-	std::size_t num_inner_splits;
-	std::size_t num_leaf_trims;
-	std::size_t num_inner_trims;
-	std::size_t num_leaf_merges;
-	std::size_t num_inner_merges;
+	std::atomic_size_t num_elements;
+	std::atomic_size_t num_leaf_splits;
+	std::atomic_size_t num_inner_splits;
+	std::atomic_size_t num_leaf_trims;
+	std::atomic_size_t num_inner_trims;
+	std::atomic_size_t num_leaf_merges;
+	std::atomic_size_t num_inner_merges;
 
-	std::size_t num_pessimistic_reads;
-	std::size_t num_optimistic_fails;
-	std::size_t num_retrys;
+	std::atomic_size_t num_pessimistic_reads;
+	std::atomic_size_t num_optimistic_fails;
+	std::atomic_size_t num_retrys;
 
 	void
 	dump(std::ostream &ostr) const
