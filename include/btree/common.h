@@ -83,6 +83,10 @@ struct btree_stats_t
 	std::size_t num_leaf_merges;
 	std::size_t num_inner_merges;
 
+	std::size_t num_pessimistic_reads;
+	std::size_t num_optimistic_fails;
+	std::size_t num_retrys;
+
 	void
 	dump(std::ostream &ostr) const
 	{
@@ -92,6 +96,10 @@ struct btree_stats_t
 		ostr << "Num Inner Trims = " << num_inner_trims << "\n";
 		ostr << "Num Leaf Merges = " << num_leaf_merges << "\n";
 		ostr << "Num Inner Merges = " << num_inner_merges << "\n";
+
+		ostr << "Num Pessimistic Reads = " << num_pessimistic_reads << "\n";
+		ostr << "Num Optimistic Fails = " << num_optimistic_fails << "\n";
+		ostr << "Num Retries = " << num_retrys << "\n";
 	}
 };
 

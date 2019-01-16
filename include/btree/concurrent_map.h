@@ -710,7 +710,7 @@ private:
 			}
 			else
 			{
-				return std::nullopt;
+				return {};
 			}
 
 			return old_value;
@@ -993,7 +993,7 @@ private:
 	std::atomic<node_t *> m_root             = nullptr;
 
 	std::atomic_int m_height = 0;
-	Stats m_stats            = {};
+	mutable Stats m_stats    = {};
 
 	utils::EpochManager<uint64_t, node_t> m_gc;
 
@@ -1041,6 +1041,8 @@ private:
 	inline void
 	try_lock_pessimistic(node_t *node, nodestate_t &state) const
 	{
+		BTREE_UPDATE_STAT(pessimistic_read, ++);
+
 		if (node)
 		{
 			node->mutex.lock();
@@ -1088,6 +1090,7 @@ private:
 		{
 			if (!try_lock_optimistic(node, state))
 			{
+				BTREE_UPDATE_STAT(optimistic_fail, ++);
 				try_lock_pessimistic(node, state);
 				node->mutex.unlock();
 			}
@@ -1609,6 +1612,8 @@ private:
 			{
 				return res.second;
 			}
+
+			BTREE_UPDATE_STAT(retry, ++);
 		}
 	}
 
@@ -1625,7 +1630,7 @@ private:
 		int pos = parent->search_inner(key);
 
 		if (pos == 0)
-			return std::nullopt;
+			return {};
 
 		return MergeInfo{ parent->get_key_value(pos)->first, pos - 1 };
 	}
@@ -1774,7 +1779,10 @@ private:
 				leaf->get_slots_less_than(*key, slots);
 
 				if (is_snapshot_stale(leaf_snapshot))
+				{
+					BTREE_UPDATE_STAT(retry, ++);
 					continue;
+				}
 
 				if (leaf && slots.empty())
 				{
@@ -1813,7 +1821,10 @@ private:
 				leaf->get_slots_greater_than_eq(*key, slots);
 
 				if (is_snapshot_stale(leaf_snapshot))
+				{
+					BTREE_UPDATE_STAT(retry, ++);
 					continue;
+				}
 
 				if (leaf && slots.empty())
 				{
@@ -1953,13 +1964,15 @@ public:
 			NodeSnapshot leaf_snapshot = get_leaf_containing(key);
 
 			if (leaf_snapshot.node == nullptr)
-				return std::nullopt;
+				return {};
 
 			if (auto res = update_leaf(leaf_snapshot, key, val);
 			    res.first != OpResult::STALE_SNAPSHOT)
 			{
 				return res.second;
 			}
+
+			BTREE_UPDATE_STAT(retry, ++);
 		}
 	}
 
@@ -1968,7 +1981,7 @@ public:
 	{
 		std::optional<Value> val{};
 
-		while (true)
+		do
 		{
 			EpochGuard eg(this);
 			NodeSnapshot leaf_snapshot = get_leaf_containing(key);
@@ -1987,11 +2000,13 @@ public:
 					val = std::nullopt;
 
 				if (is_snapshot_stale(leaf_snapshot))
+				{
+					BTREE_UPDATE_STAT(retry, ++);
 					continue;
+				}
 			}
 
-			break;
-		}
+		} while (false);
 
 		return val;
 	}
@@ -2020,6 +2035,8 @@ public:
 			{
 				return {};
 			}
+
+			BTREE_UPDATE_STAT(retry, ++);
 		}
 	}
 
