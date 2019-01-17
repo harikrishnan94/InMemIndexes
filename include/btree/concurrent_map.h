@@ -350,7 +350,8 @@ private:
 
 			return ((next_slot_offset + sizeof(int))
 			        <= (this->last_value_offset - sizeof(key_value_t)))
-			       && (max_slot_offset <= (this->last_value_offset - sizeof(key_value_t)));
+			       && (max_slot_offset
+			           <= static_cast<int>(this->last_value_offset - sizeof(key_value_t)));
 		}
 
 		// Must be called with both this's and other's mutex held
@@ -2079,7 +2080,7 @@ public:
 		void
 		increment()
 		{
-			if (++m_curpos >= m_slots.size())
+			if (++m_curpos >= static_cast<int>(m_slots.size()))
 			{
 				if (this->m_leaf->highkey)
 				{

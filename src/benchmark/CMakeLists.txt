@@ -2,7 +2,6 @@ add_executable(${BENCHMARK} ${BENCH_SRC})
 target_link_libraries(${BENCHMARK} PRIVATE ${LIB})
 target_link_libraries(${BENCHMARK} PRIVATE benchmark::benchmark_main jemalloc)
 
-find_package(Threads)
 find_package(cxxopts CONFIG REQUIRED)
 
 add_executable(${RAND_INT_BENCH} ${RAND_INT_BENCH_SRC})

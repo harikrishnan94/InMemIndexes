@@ -61,7 +61,7 @@ hasher(uint64_t k)
 	k ^= k >> 33;
 
 	return k;
-};
+}
 
 static void
 insert_values(std::string dist, Map &map, int64_t rowcount)

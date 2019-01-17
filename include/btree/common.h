@@ -6,12 +6,14 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cinttypes>
 #include <cstddef>
 #include <deque>
 #include <functional>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <tuple>
@@ -75,17 +77,17 @@ struct btree_traits_debug : btree_traits_default
 
 struct btree_stats_t
 {
-	std::atomic_size_t num_elements;
-	std::atomic_size_t num_leaf_splits;
-	std::atomic_size_t num_inner_splits;
-	std::atomic_size_t num_leaf_trims;
-	std::atomic_size_t num_inner_trims;
-	std::atomic_size_t num_leaf_merges;
-	std::atomic_size_t num_inner_merges;
+	std::atomic<size_t> num_elements;
+	std::atomic<size_t> num_leaf_splits;
+	std::atomic<size_t> num_inner_splits;
+	std::atomic<size_t> num_leaf_trims;
+	std::atomic<size_t> num_inner_trims;
+	std::atomic<size_t> num_leaf_merges;
+	std::atomic<size_t> num_inner_merges;
 
-	std::atomic_size_t num_pessimistic_reads;
-	std::atomic_size_t num_optimistic_fails;
-	std::atomic_size_t num_retrys;
+	std::atomic<size_t> num_pessimistic_reads;
+	std::atomic<size_t> num_optimistic_fails;
+	std::atomic<size_t> num_retrys;
 
 	void
 	dump(std::ostream &ostr) const

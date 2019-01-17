@@ -92,7 +92,8 @@ private:
 		inline bool
 		haveEnoughSpace(int size) const
 		{
-			return (this->next_slot_offset + sizeof(int)) <= (this->last_value_offset - size);
+			return static_cast<int>(this->next_slot_offset + sizeof(int))
+			       <= (this->last_value_offset - size);
 		}
 
 		inline bool
@@ -662,7 +663,7 @@ private:
 	NodeSplitInfo<Node>
 	split_node(Node *node, inner_node_t *parent)
 	{
-		NodeSplitInfo splitinfo = node->split();
+		NodeSplitInfo<Node> splitinfo = node->split();
 
 		if (node != m_root)
 		{
@@ -722,8 +723,8 @@ private:
 		}
 		else
 		{
-			NodeSplitInfo splitinfo = split_node(node, parent);
-			const Key &split_key    = splitinfo.split_key;
+			NodeSplitInfo<Node> splitinfo = split_node(node, parent);
+			const Key &split_key          = splitinfo.split_key;
 
 			return static_cast<Node *>(key_less(key, split_key) ? splitinfo.left : splitinfo.right);
 		}
