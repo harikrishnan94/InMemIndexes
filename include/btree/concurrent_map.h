@@ -1339,7 +1339,7 @@ private:
 	{
 		std::vector<std::unique_lock<std::mutex>> locks;
 
-		for (int node_ss = from_ss; node_ss < nss_vec.size(); node_ss++)
+		for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size()); node_ss++)
 		{
 			const NodeSnapshot &snapshot = nss_vec[node_ss];
 
@@ -1351,7 +1351,7 @@ private:
 
 		if (update())
 		{
-			for (int node_ss = from_ss; node_ss < nss_vec.size(); node_ss++)
+			for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size()); node_ss++)
 			{
 				const NodeSnapshot &snapshot = nss_vec[node_ss];
 

@@ -233,7 +233,7 @@ private:
 		for (auto object : objects)
 			retire_list.emplace_back(object, reclaimer, retired_epoch);
 
-		if (retire_list.size() >= m_reclaimation_threshold)
+		if (static_cast<int>(retire_list.size()) >= m_reclaimation_threshold)
 			do_reclaim();
 	}
 

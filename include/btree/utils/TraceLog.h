@@ -73,7 +73,7 @@ public:
 		Event *evt;
 		int index = page->index.fetch_add(1, std::memory_order_relaxed);
 
-		if (index < EventsPerPage)
+		if (static_cast<unsigned>(index) < EventsPerPage)
 			evt = &page->events[index];
 		else
 			evt = allocateEventFromNewPage(); // Double-checked locking is performed inside here.
@@ -103,7 +103,7 @@ public:
 		{
 			m_index++;
 
-			if (m_index >= EventsPerPage)
+			if (static_cast<unsigned>(m_index) >= EventsPerPage)
 			{
 				Page *next = m_page->next;
 				if (next)

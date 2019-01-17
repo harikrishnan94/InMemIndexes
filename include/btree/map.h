@@ -246,7 +246,8 @@ private:
 		inline value_t
 		get_first_child() const
 		{
-			return *reinterpret_cast<value_t *>(&get_key_value(0)->first);
+			value_t *valptr = reinterpret_cast<value_t *>(&get_key_value(0)->first);
+			return *valptr;
 		}
 
 		INNER_ONLY

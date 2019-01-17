@@ -18,7 +18,7 @@ public:
 	void reset();
 	void update(const unsigned char *message, unsigned int len);
 	void final(unsigned char *digest);
-	static const unsigned int DIGEST_SIZE = (512 / 8);
+	static constexpr int DIGEST_SIZE = (512 / 8);
 
 protected:
 	void transform(const unsigned char *message, unsigned int block_nb);

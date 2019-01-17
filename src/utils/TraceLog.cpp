@@ -36,11 +36,11 @@ TraceLog::allocateEventFromNewPage()
 	// allocateEventFromNewPage and created a new page by the time we get take the lock.
 	Page *oldTail = m_tail.load(std::memory_order_relaxed);
 
-	if (oldTail->index.load(std::memory_order_relaxed) < EventsPerPage)
+	if (static_cast<unsigned>(oldTail->index.load(std::memory_order_relaxed)) < EventsPerPage)
 	{
 		int index = oldTail->index.fetch_add(1, std::memory_order_relaxed);
 		// Yes! We got a slot on this page.
-		if (index < EventsPerPage)
+		if (static_cast<unsigned>(index) < EventsPerPage)
 			return &oldTail->events[index];
 	}
 
