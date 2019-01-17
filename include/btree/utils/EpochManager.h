@@ -130,11 +130,12 @@ public:
 		auto begin        = std::begin(retire_list);
 		auto reclaim_upto = begin;
 
-		for (const auto &retiree : retire_list)
+		for (auto &retiree : retire_list)
 		{
 			if (!retiree.can_reclaim(min_used_epoch))
 				break;
 
+			retiree.reclaim();
 			reclaim_upto++;
 		}
 
@@ -189,17 +190,17 @@ private:
 		    : m_object(object), m_retired_epoch(retired_epoch), m_reclaimer(reclaimer)
 		{}
 
-		~Retiree()
-		{
-			// Reclaim when destroyed.
-			m_reclaimer(m_object);
-		}
-
 		// Can reclaim this object after the given `epoch`
 		bool
 		can_reclaim(epoch_t epoch) const
 		{
 			return epoch > m_retired_epoch;
+		}
+
+		void
+		reclaim()
+		{
+			return m_reclaimer(m_object);
 		}
 
 	private:
