@@ -63,40 +63,97 @@ hasher(uint64_t k)
 	return k;
 }
 
+/*
+ * class Permutation - Generates permutation of k numbers, ranging from
+ *                     0 to k - 1
+ *
+ * This is usually used to randomize insert() to a data structure such that
+ *   (1) Each Insert() call could hit the data structure
+ *   (2) There is no extra overhead for failed insertion because all keys are
+ *       unique
+ */
+template <typename IntType>
+class Permutation
+{
+private:
+	std::vector<IntType> data;
+
+public:
+	/*
+	 * Generate() - Generates a permutation and store them inside data
+	 */
+	void
+	Generate(size_t count, IntType start = IntType{ 0 })
+	{
+		// Extend data vector to fill it with elements
+		data.resize(count);
+
+		// This function fills the vector with IntType ranging from
+		// start to start + count - 1
+		std::iota(data.begin(), data.end(), start);
+
+		// The two arguments define a closed interval, NOT open interval
+		std::random_device device;
+		std::default_random_engine engine{ device() };
+		std::uniform_int_distribution<IntType> dist(0, count - 1);
+
+		// Then swap all elements with a random position
+		for (size_t i = 0; i < count; i++)
+		{
+			IntType random_key = dist(engine);
+
+			// Swap two numbers
+			std::swap(data[i], data[random_key]);
+		}
+
+		return;
+	}
+
+	/*
+	 * Constructor
+	 */
+	Permutation()
+	{}
+
+	/*
+	 * Constructor - Starts the generation process
+	 */
+	Permutation(size_t count, IntType start = IntType{ 0 })
+	{
+		Generate(count, start);
+
+		return;
+	}
+
+	/*
+	 * operator[] - Accesses random elements
+	 *
+	 * Note that return type is reference type, so element could be
+	 * modified using this method
+	 */
+	inline IntType &operator[](size_t index)
+	{
+		return data[index];
+	}
+
+	inline const IntType &operator[](size_t index) const
+	{
+		return data[index];
+	}
+};
+
 static void
-insert_values(std::string dist, Map &map, int64_t rowcount)
+insert_values(Map &map, int64_t rowcount)
 {
 	btree::utils::ThreadLocal::RegisterThread();
 
-	ycsbc::ZipfianGenerator zgenerator{ 0, static_cast<uint64_t>(rowcount) };
-	ycsbc::UniformGenerator ugenerator{ 0, static_cast<uint64_t>(rowcount) }; // TODO
+	Permutation<long> generator(rowcount);
 
-	auto get_key = [&]() {
-		if (dist == "zipf")
-		{
-			return static_cast<std::function<uint64_t()>>(
-			    [&]() { return zgenerator.NextUnlocked(); });
-		}
-		else if (dist == "uniform")
-		{
-			return static_cast<std::function<uint64_t()>>(
-			    [&]() { return ugenerator.NextUnlocked(); });
-		}
-		else
-		{
-			return static_cast<std::function<uint64_t()>>([]() {
-				std::terminate();
-				return 0;
-			});
-		}
-	}();
-
-	while (rowcount)
+	for (int64_t i = 0; i < rowcount; i++)
 	{
-		auto key = get_key();
+		auto key = generator[i];
 
 		map.Insert(key, hasher(key));
-		rowcount--;
 	}
 
 	btree::utils::ThreadLocal::UnregisterThread();
@@ -210,7 +267,7 @@ do_benchmark(const BMArgs &args)
 
 	{
 		auto start = std::chrono::steady_clock::now();
-		insert_values(args.dist, map, args.rowcount);
+		insert_values(map, args.rowcount);
 		auto end               = std::chrono::steady_clock::now();
 		auto populate_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 		auto millis_elapsed =
