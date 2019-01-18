@@ -413,7 +413,8 @@ main(int argc, char *argv[])
 		args.delete_p    = result["delete"].as<int>();
 		args.update_p    = result["update"].as<int>();
 
-		args.rowcount = (args.rowcount / args.num_threads) * args.num_threads + 1;
+		if (args.rowcount % args.num_threads != 0)
+			args.rowcount = ((args.rowcount / args.num_threads) + 1) * args.num_threads;
 
 		if (!args.check_operations_proportions())
 			throw std::string{ "Sum of Read, Insert, Delete and Update proportions should match" };
