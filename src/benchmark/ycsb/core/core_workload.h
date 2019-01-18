@@ -142,8 +142,8 @@ public:
 	virtual void Init(const utils::Properties &p);
 
 	virtual void BuildValues(std::vector<ycsbc::DB::KVPair> &values);
-	virtual void BuildValues(DB::FieldMap &values);
-	virtual void BuildUpdate(DB::FieldMap &update);
+	virtual void BuildValues(ycsbc::DB::FieldMap &values);
+	virtual void BuildUpdate(ycsbc::DB::FieldMap &update);
 
 	virtual std::string
 	NextTable()

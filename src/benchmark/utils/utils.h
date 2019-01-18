@@ -10,6 +10,7 @@
 #define YCSB_C_UTILS_H_
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <exception>
 #include <random>

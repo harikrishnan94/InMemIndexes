@@ -137,7 +137,8 @@ private:
 
 	enum class InsertStatus
 	{
-		OVERFLOW,
+		// In Windows OVERFLOW is defined as macro internally, so use..
+		OVFLOW,
 		DUPLICATE,
 		INSERTED
 	};
@@ -362,7 +363,7 @@ private:
 				return InsertStatus::INSERTED;
 			}
 
-			return InsertStatus::OVERFLOW;
+			return InsertStatus::OVFLOW;
 		}
 
 		INNER_ONLY
@@ -737,16 +738,15 @@ private:
 	{
 		InsertStatus status;
 
-		std::tie(status, pos) =
-		    pos >= 0 ? node->template insert(key, pos) : node->template insert(key);
+		std::tie(status, pos) = pos >= 0 ? node->insert(key, pos) : node->insert(key);
 
-		if (status == InsertStatus::OVERFLOW)
+		if (status == InsertStatus::OVFLOW)
 		{
 			node = handle_overflow(node, key);
 
-			std::tie(status, pos) = node->template insert(key);
+			std::tie(status, pos) = node->insert(key);
 
-			BTREE_DEBUG_ASSERT(status != InsertStatus::OVERFLOW);
+			BTREE_DEBUG_ASSERT(status != InsertStatus::OVFLOW);
 			BTREE_DEBUG_ONLY(status);
 		}
 

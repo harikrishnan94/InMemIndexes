@@ -290,7 +290,8 @@ private:
 
 	enum class InsertStatus
 	{
-		OVERFLOW,
+		// In Windows OVERFLOW is defined as macro internally, so use..
+		OVFLOW,
 		DUPLICATE,
 		INSERTED
 	};
@@ -607,7 +608,7 @@ private:
 
 		// Must be called with this's mutex held
 		inline InsertStatus
-		insert_into_pos(const Key &key, const Value &val, int pos)
+		insert_into_pos(const Key &key, const value_t &val, int pos)
 		{
 			if (this->haveEnoughSpace())
 			{
@@ -621,12 +622,12 @@ private:
 				return InsertStatus::INSERTED;
 			}
 
-			return InsertStatus::OVERFLOW;
+			return InsertStatus::OVFLOW;
 		}
 
 		// Must be called with this's mutex held
 		InsertStatus
-		insert(const Key &key, const Value &val)
+		insert(const Key &key, const value_t &val)
 		{
 			bool key_present = false;
 			int pos          = 0;
@@ -762,7 +763,7 @@ private:
 				return InsertStatus::INSERTED;
 			}
 
-			return InsertStatus::OVERFLOW;
+			return InsertStatus::OVFLOW;
 		}
 
 		// Must be called with this's mutex held
@@ -1462,7 +1463,10 @@ private:
 
 		return replace_subtree_on_version_match(nss_vec, node_ss, [&]() {
 			if constexpr (Node::IsInner())
-				trimmed_node->update_inner_for_split(prev_split_info);
+			{
+				reinterpret_cast<inner_node_t *>(trimmed_node)
+				    ->update_inner_for_split(prev_split_info);
+			}
 
 			if (parent)
 				parent->update_inner_for_trim(key, trimmed_node);
@@ -1580,7 +1584,7 @@ private:
 				status = leaf->insert(key, val);
 		}
 
-		if (status == InsertStatus::OVERFLOW)
+		if (status == InsertStatus::OVFLOW)
 		{
 			handle_overflow(nss_vec, key);
 
@@ -1715,6 +1719,8 @@ private:
 		std::pair<OpResult, std::optional<Value>> ret{};
 
 		{
+			bool is_deleted = false;
+
 			auto do_delete = [&]() {
 				if (is_snapshot_stale(leaf_snapshot))
 				{
@@ -1733,7 +1739,7 @@ private:
 				ret = { OpResult::SUCCESS, leaf->get_key_value(pos)->second };
 
 				leaf->remove_pos(pos);
-				BTREE_UPDATE_STAT(element, --);
+				is_deleted = true;
 
 				leaf_snapshot = { leaf, leaf->getState() };
 			};
@@ -1749,6 +1755,9 @@ private:
 
 				do_delete();
 			}
+
+			if (is_deleted)
+				BTREE_UPDATE_STAT(element, --);
 		}
 
 		if (leaf->isUnderfull())

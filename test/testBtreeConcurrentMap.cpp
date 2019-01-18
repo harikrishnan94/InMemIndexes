@@ -47,7 +47,7 @@ struct btree_small_page_traits : btree::btree_traits_debug
 
 struct btree_traits_string_key : btree::btree_traits_debug
 {
-	static constexpr int NODE_SIZE            = 384;
+	static constexpr int NODE_SIZE            = 448;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
 };
 
@@ -297,7 +297,7 @@ TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 
 	std::uniform_int_distribution<int> key_dist{ 1, cardinality };
 	std::uniform_int_distribution<int> val_dist;
-	std::uniform_int_distribution<decltype(INSERT_OP)> op_dist{ INSERT_OP, DELETE_OP };
+	std::uniform_int_distribution<> op_dist{ INSERT_OP, DELETE_OP };
 
 	std::map<int, int> key_values;
 

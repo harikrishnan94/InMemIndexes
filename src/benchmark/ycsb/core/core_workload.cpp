@@ -200,7 +200,7 @@ CoreWorkload::GetFieldLenGenerator(const utils::Properties &p)
 }
 
 void
-CoreWorkload::BuildValues(DB::FieldVec &values)
+CoreWorkload::BuildValues(ycsbc::DB::FieldVec &values)
 {
 	for (int i = 0; i < field_count_; ++i)
 	{
@@ -212,7 +212,7 @@ CoreWorkload::BuildValues(DB::FieldVec &values)
 }
 
 void
-CoreWorkload::BuildValues(DB::FieldMap &values)
+CoreWorkload::BuildValues(ycsbc::DB::FieldMap &values)
 {
 	for (int i = 0; i < field_count_; ++i)
 	{
@@ -222,7 +222,7 @@ CoreWorkload::BuildValues(DB::FieldMap &values)
 }
 
 void
-CoreWorkload::BuildUpdate(DB::FieldMap &update)
+CoreWorkload::BuildUpdate(ycsbc::DB::FieldMap &update)
 {
 	update[NextFieldName()] = std::string(field_len_generator_->Next(), utils::RandomPrintChar());
 }
