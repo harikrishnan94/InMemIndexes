@@ -2380,6 +2380,12 @@ public:
 		return m_height;
 	}
 
+	inline void
+	reclaim_all()
+	{
+		m_gc.reclaim_all();
+	}
+
 	template <typename Dummy = void, typename = std::enable_if_t<Traits::STAT, Dummy>>
 	inline std::size_t
 	size() const

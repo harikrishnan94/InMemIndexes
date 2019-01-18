@@ -124,30 +124,18 @@ public:
 	size_t
 	do_reclaim()
 	{
+		return reclaim_in_retire_list(m_retire_list[ThreadLocal::ThreadID()], get_min_used_epoch());
+	}
+
+	void
+	reclaim_all()
+	{
 		epoch_t min_used_epoch = get_min_used_epoch();
 
-		auto &retire_list = m_retire_list[ThreadLocal::ThreadID()];
-		auto begin        = std::begin(retire_list);
-		auto reclaim_upto = begin;
-
-		for (auto &retiree : retire_list)
+		for (auto &retire_list : m_retire_list)
 		{
-			if (!retiree.can_reclaim(min_used_epoch))
-				break;
-
-			retiree.reclaim();
-			reclaim_upto++;
+			reclaim_in_retire_list(retire_list, min_used_epoch);
 		}
-
-		size_t num_reclaimed = reclaim_upto - begin;
-
-		if (num_reclaimed)
-		{
-			retire_list.erase(begin, reclaim_upto);
-			retire_list.shrink_to_fit();
-		}
-
-		return retire_list.size();
 	}
 
 	// Getter/Setter for reclaimation threshold.
@@ -211,6 +199,32 @@ private:
 		// Callback to call during reclaimation.
 		std::function<void(ReclaimedPtrType object)> m_reclaimer;
 	};
+
+	static size_t
+	reclaim_in_retire_list(std::deque<Retiree> &retire_list, epoch_t min_used_epoch)
+	{
+		auto begin        = std::begin(retire_list);
+		auto reclaim_upto = begin;
+
+		for (auto &retiree : retire_list)
+		{
+			if (!retiree.can_reclaim(min_used_epoch))
+				break;
+
+			retiree.reclaim();
+			reclaim_upto++;
+		}
+
+		size_t num_reclaimed = reclaim_upto - begin;
+
+		if (num_reclaimed)
+		{
+			retire_list.erase(begin, reclaim_upto);
+			retire_list.shrink_to_fit();
+		}
+
+		return retire_list.size();
+	}
 
 	epoch_t
 	get_min_used_epoch()

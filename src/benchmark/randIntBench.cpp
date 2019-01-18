@@ -346,6 +346,8 @@ do_benchmark(const BMArgs &args)
 			worker.join();
 		}
 	}
+
+	map.reclaim_all();
 }
 
 int
