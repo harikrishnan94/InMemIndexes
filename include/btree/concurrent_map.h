@@ -1510,8 +1510,11 @@ private:
 					// Delete allocated nodes
 					for (auto splitinfo : splitinfos)
 					{
-						delete splitinfo.left;
-						delete splitinfo.right;
+						if (splitinfo.left)
+							node_t::free(splitinfo.left);
+
+						if (splitinfo.right)
+							node_t::free(splitinfo.right);
 					}
 				}
 
