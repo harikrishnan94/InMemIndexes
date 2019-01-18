@@ -1093,7 +1093,9 @@ private:
 			{
 				BTREE_UPDATE_STAT(optimistic_fail, ++);
 				try_lock_pessimistic(node, state);
-				node->mutex.unlock();
+
+				if (!state.is_deleted())
+					node->mutex.unlock();
 			}
 		}
 		else
