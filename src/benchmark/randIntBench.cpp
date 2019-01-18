@@ -2,6 +2,7 @@
 #include "utils/uniform_generator.h"
 #include "utils/zipfian_generator.h"
 
+#include <atomic>
 #include <chrono>
 #include <cinttypes>
 #include <cxxopts.hpp>
@@ -142,21 +143,48 @@ public:
 	}
 };
 
-static void
-insert_values(Map &map, int64_t rowcount)
+static auto
+insert_values(Map &map, int64_t rowcount, int num_threads)
 {
-	btree::utils::ThreadLocal::RegisterThread();
-
+	std::vector<std::thread> workers;
 	Permutation<long> generator(rowcount);
 
-	for (int64_t i = 0; i < rowcount; i++)
-	{
-		auto key = generator[i];
+	constexpr int BATCH             = 100;
+	std::atomic<int64_t> next_batch = 0;
 
-		map.Insert(key, hasher(key));
+	auto start = std::chrono::steady_clock::now();
+
+	for (int i = 0; i < num_threads; i++)
+	{
+		workers.emplace_back([&]() {
+			btree::utils::ThreadLocal::RegisterThread();
+
+			do
+			{
+				auto start = next_batch.fetch_add(BATCH);
+				auto end   = std::min(start + BATCH, rowcount);
+
+				for (auto i = start; i < end; i++)
+				{
+					auto key = generator[i];
+
+					map.Insert(key, hasher(key));
+				}
+			} while (next_batch < rowcount);
+
+			btree::utils::ThreadLocal::UnregisterThread();
+		});
 	}
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	for (auto &worker : workers)
+	{
+		worker.join();
+	}
+
+	auto end               = std::chrono::steady_clock::now();
+	auto populate_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+	return std::max(populate_duration.count(), static_cast<std::chrono::milliseconds::rep>(1));
 }
 
 static void
@@ -266,14 +294,11 @@ do_benchmark(const BMArgs &args)
 	Map map;
 
 	{
-		auto start = std::chrono::steady_clock::now();
-		insert_values(map, args.rowcount);
-		auto end               = std::chrono::steady_clock::now();
-		auto populate_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-		auto millis_elapsed =
-		    std::max(populate_duration.count(), static_cast<std::chrono::milliseconds::rep>(1));
+		auto millis_elapsed = insert_values(map, args.rowcount, args.num_threads);
 
 		std::cout << "Populated " << args.rowcount << " values in " << millis_elapsed << " ms\n";
+		std::cout << "Insert Transaction throughput (KTPS) : " << args.rowcount / millis_elapsed
+		          << std::endl;
 	}
 
 	{
@@ -311,8 +336,8 @@ do_benchmark(const BMArgs &args)
 		auto millis_elapsed =
 		    std::max(populate_duration.count(), static_cast<std::chrono::milliseconds::rep>(1));
 
-		std::cout << "Completed " << num_successful_ops << " out of " << args.opercount << " in "
-		          << millis_elapsed << " ms\n";
+		std::cout << "Completed " << num_successful_ops << " transactions out of " << args.opercount
+		          << " in " << millis_elapsed << " ms\n";
 		std::cout << "Transaction throughput (KTPS) : " << args.opercount / millis_elapsed
 		          << std::endl;
 
@@ -387,6 +412,8 @@ main(int argc, char *argv[])
 		args.insert_p    = result["insert"].as<int>();
 		args.delete_p    = result["delete"].as<int>();
 		args.update_p    = result["update"].as<int>();
+
+		args.rowcount = (args.rowcount / args.num_threads) * args.num_threads + 1;
 
 		if (!args.check_operations_proportions())
 			throw std::string{ "Sum of Read, Insert, Delete and Update proportions should match" };
