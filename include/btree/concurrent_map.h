@@ -1339,36 +1339,44 @@ private:
 	                                 int from_ss,
 	                                 Update &&update)
 	{
-		std::vector<std::unique_lock<std::mutex>> locks;
+		static thread_local std::vector<node_t *> deleted_nodes;
 
-		for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size()); node_ss++)
-		{
-			const NodeSnapshot &snapshot = nss_vec[node_ss];
-
-			locks.emplace_back(snapshot.node->mutex);
-
-			if (is_snapshot_stale(snapshot))
-				return OpResult::STALE_SNAPSHOT;
-		}
-
-		if (update())
-		{
+		auto res = [&]() {
+			std::vector<std::unique_lock<std::mutex>> locks;
 			for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size()); node_ss++)
 			{
 				const NodeSnapshot &snapshot = nss_vec[node_ss];
 
-				snapshot.node->setState(
-				    snapshot.node->getState().set_deleted().increment_version());
+				locks.emplace_back(snapshot.node->mutex);
 
-				m_gc.retire_in_current_epoch(node_t::free, snapshot.node);
+				if (is_snapshot_stale(snapshot))
+					return OpResult::STALE_SNAPSHOT;
 			}
 
-			m_gc.switch_epoch();
+			if (update())
+			{
+				for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size()); node_ss++)
+				{
+					const NodeSnapshot &snapshot = nss_vec[node_ss];
 
-			return OpResult::SUCCESS;
-		}
+					snapshot.node->setState(
+					    snapshot.node->getState().set_deleted().increment_version());
 
-		return OpResult::FAILURE;
+					deleted_nodes.push_back(snapshot.node);
+				}
+
+				return OpResult::SUCCESS;
+			}
+
+			return OpResult::FAILURE;
+		}();
+
+		if (res == OpResult::SUCCESS)
+			m_gc.retire_in_new_epoch(node_t::free, deleted_nodes);
+
+		deleted_nodes.clear();
+
+		return res;
 	}
 
 	template <typename Node>
@@ -1685,9 +1693,10 @@ private:
 
 				m_gc.retire_in_current_epoch(node_t::free, sibiling);
 				m_gc.retire_in_current_epoch(node_t::free, node);
-				m_gc.switch_epoch();
 			}
 		}
+
+		m_gc.switch_epoch();
 
 		if (parent->isUnderfull())
 			merge_node<inner_node_t>(node_ss - 1, nss_vec, key);
