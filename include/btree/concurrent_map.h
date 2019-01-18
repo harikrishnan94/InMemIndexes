@@ -1168,6 +1168,9 @@ private:
 			parent       = current;
 			parent_state = current_state;
 			current      = get_children(ASINNER(current));
+
+			if (is_snapshot_stale({ parent, parent_state }))
+				return OpResult::STALE_SNAPSHOT;
 		}
 
 		if ((current && lock_node_or_restart<UseOptimisticLocking>(current, current_state))
