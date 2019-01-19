@@ -46,7 +46,7 @@ find_path(VCPKG_INCLUDE_DIR NAMES tsl gsl catch.hpp)
 include_directories(AFTER ${VCPKG_INCLUDE_DIR})
 
 if(NOT MSVC)
-  add_compile_options("-Wall -pedantic")
+  add_compile_options("-Wall" "-pedantic")
 endif(NOT MSVC)
 
 add_library(${LIB} SHARED ${SRC})
