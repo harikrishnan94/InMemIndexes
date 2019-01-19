@@ -44,7 +44,10 @@ find_package(benchmark CONFIG REQUIRED)
 find_path(VCPKG_INCLUDE_DIR NAMES tsl gsl catch.hpp)
 
 include_directories(AFTER ${VCPKG_INCLUDE_DIR})
-add_compile_options("-Wall")
+
+if(NOT MSVC)
+  add_compile_options("-Wall -pedantic")
+endif(NOT MSVC)
 
 add_library(${LIB} SHARED ${SRC})
 

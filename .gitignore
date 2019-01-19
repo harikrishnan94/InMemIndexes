@@ -37,5 +37,9 @@
 # VS Code files
 .vscode
 
+# VS files
+.vs
+CMakeSettings.json
+
 # Build directories
 build*
