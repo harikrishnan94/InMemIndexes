@@ -36,6 +36,7 @@
 
 # VS Code files
 .vscode
+compile_commands.json
 
 # VS files
 .vs
