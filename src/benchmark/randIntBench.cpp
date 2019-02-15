@@ -50,7 +50,7 @@ struct LongCompare
 	}
 };
 
-using Map = btree::concurrent_map<long, long, LongCompare, btree_big_page_traits>;
+using Map = btree::concurrent_map<int64_t, int64_t, LongCompare, btree_big_page_traits>;
 
 static uint64_t
 hasher(uint64_t k)
@@ -148,7 +148,7 @@ static auto
 insert_values(Map &map, int64_t rowcount, int num_threads)
 {
 	std::vector<std::thread> workers;
-	Permutation<long> generator(rowcount);
+	Permutation<int64_t> generator(rowcount);
 
 	constexpr int BATCH             = 100;
 	std::atomic<int64_t> next_batch = 0;
