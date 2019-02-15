@@ -252,7 +252,7 @@ private:
 	}
 
 	// Reclaimation threshold. Default 1000 objects
-	std::atomic_int m_reclaimation_threshold;
+	std::atomic<int> m_reclaimation_threshold;
 
 	// Global epoch
 	std::atomic<epoch_t> m_global_epoch;

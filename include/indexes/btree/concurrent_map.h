@@ -172,18 +172,18 @@ private:
 	struct node_t
 	{
 		std::atomic<nodestate_t> state = {};
-		std::atomic_int num_values     = 0;
+		std::atomic<int> num_values    = 0;
 
 		// max_slot_offset is required to guard readers from concurrent updaters.
 		// concurrent updaters might overwrite slots which can be read by readers,
 		// with key/value data.
 
-		std::atomic_int logical_pagesize = 0;
-		std::atomic_int next_slot_offset = 0;
-		std::atomic_int max_slot_offset  = 0;
-		int last_value_offset            = Traits::NODE_SIZE;
+		std::atomic<int> logical_pagesize = 0;
+		std::atomic<int> next_slot_offset = 0;
+		std::atomic<int> max_slot_offset  = 0;
+		int last_value_offset             = Traits::NODE_SIZE;
 
-		std::atomic_int8_t num_dead_values = 0;
+		std::atomic<int8_t> num_dead_values = 0;
 		const NodeType node_type;
 		const int height;
 
@@ -252,10 +252,10 @@ private:
 			return reinterpret_cast<char *>(reinterpret_cast<intptr_t>(this));
 		}
 
-		inline std::atomic_int *
+		inline std::atomic<int> *
 		get_slots() const
 		{
-			return reinterpret_cast<std::atomic_int *>(opaque() + sizeof(node_t));
+			return reinterpret_cast<std::atomic<int> *>(opaque() + sizeof(node_t));
 		}
 
 		inline bool
@@ -378,7 +378,7 @@ private:
 		inline key_value_t *
 		get_key_value(int slot) const
 		{
-			const std::atomic_int *slots = this->get_slots();
+			const std::atomic<int> *slots = this->get_slots();
 
 			return get_key_value_for_offset(slots[slot].load(std::memory_order_relaxed));
 		}
@@ -438,8 +438,8 @@ private:
 		int
 		lower_bound_pos(const Key &key, int num_values) const
 		{
-			int firstslot          = IsLeaf() ? 0 : 1;
-			std::atomic_int *slots = this->get_slots();
+			int firstslot           = IsLeaf() ? 0 : 1;
+			std::atomic<int> *slots = this->get_slots();
 
 			return std::lower_bound(slots + firstslot,
 			                        slots + num_values,
@@ -453,8 +453,8 @@ private:
 		int
 		upper_bound_pos(const Key &key, int num_values) const
 		{
-			int firstslot          = IsLeaf() ? 0 : 1;
-			std::atomic_int *slots = this->get_slots();
+			int firstslot           = IsLeaf() ? 0 : 1;
+			std::atomic<int> *slots = this->get_slots();
 			int pos =
 			    std::upper_bound(slots + firstslot,
 			                     slots + num_values,
@@ -539,7 +539,7 @@ private:
 
 		// Must be called with this's mutex held
 		static void
-		copy_backward(std::atomic_int *slots, int start_pos, int end_pos, int out_end_pos)
+		copy_backward(std::atomic<int> *slots, int start_pos, int end_pos, int out_end_pos)
 		{
 			BTREE_DEBUG_ASSERT(out_end_pos >= end_pos);
 
@@ -551,7 +551,7 @@ private:
 
 		// Must be called with this's mutex held
 		static void
-		copy(std::atomic_int *slots, int start_pos, int end_pos, int out_pos)
+		copy(std::atomic<int> *slots, int start_pos, int end_pos, int out_pos)
 		{
 			BTREE_DEBUG_ASSERT(out_pos < start_pos);
 
@@ -569,7 +569,7 @@ private:
 			int num_values = this->num_values;
 			BTREE_DEBUG_ASSERT(this->isInner() && num_values == 0);
 
-			std::atomic_int *slots   = this->get_slots();
+			std::atomic<int> *slots  = this->get_slots();
 			int current_value_offset = this->last_value_offset - sizeof(value_t);
 
 			new (this->opaque() + current_value_offset) value_t{ val };
@@ -583,7 +583,7 @@ private:
 		inline void
 		append(const Key &key, const value_t &val)
 		{
-			std::atomic_int *slots   = this->get_slots();
+			std::atomic<int> *slots  = this->get_slots();
 			int current_value_offset = this->last_value_offset - sizeof(key_value_t);
 			int pos                  = this->num_values;
 			int num_values           = this->num_values;
@@ -599,8 +599,8 @@ private:
 		inline void
 		insert_into_slot(int pos, int value_offset)
 		{
-			int num_values         = this->num_values;
-			std::atomic_int *slots = this->get_slots();
+			int num_values          = this->num_values;
+			std::atomic<int> *slots = this->get_slots();
 
 			copy_backward(slots, pos, num_values, num_values + 1);
 			slots[pos].store(value_offset, std::memory_order_release);
@@ -675,7 +675,7 @@ private:
 		void
 		remove_pos(int pos)
 		{
-			std::atomic_int *slots = this->get_slots();
+			std::atomic<int> *slots = this->get_slots();
 
 			atomic_node_update([&]() {
 				int num_values = this->num_values;
@@ -772,7 +772,7 @@ private:
 		inline void
 		update_inner_for_merge(int merged_pos, value_t merged_child)
 		{
-			std::atomic_int *slots          = this->get_slots();
+			std::atomic<int> *slots         = this->get_slots();
 			int deleted_pos                 = merged_pos + 1;
 			std::atomic<value_t> *old_child = get_child_ptr(merged_pos);
 
@@ -890,9 +890,9 @@ private:
 		void
 		get_slots_greater_than(const Key &key, std::vector<int> &slot_offsets) const
 		{
-			int num_values         = this->num_values;
-			int pos                = upper_bound_pos(key, num_values);
-			std::atomic_int *slots = this->get_slots();
+			int num_values          = this->num_values;
+			int pos                 = upper_bound_pos(key, num_values);
+			std::atomic<int> *slots = this->get_slots();
 
 			slot_offsets.clear();
 
@@ -906,9 +906,9 @@ private:
 		void
 		get_slots_greater_than_eq(const Key &key, std::vector<int> &slot_offsets) const
 		{
-			int num_values         = this->num_values;
-			int pos                = lower_bound_pos(key, num_values);
-			std::atomic_int *slots = this->get_slots();
+			int num_values          = this->num_values;
+			int pos                 = lower_bound_pos(key, num_values);
+			std::atomic<int> *slots = this->get_slots();
 
 			slot_offsets.clear();
 
@@ -922,8 +922,8 @@ private:
 		void
 		get_all_slots(std::vector<int> &slot_offsets) const
 		{
-			int num_values         = this->num_values;
-			std::atomic_int *slots = this->get_slots();
+			int num_values          = this->num_values;
+			std::atomic<int> *slots = this->get_slots();
 
 			for (int i = 0; i < num_values; i++)
 			{
@@ -935,7 +935,7 @@ private:
 		void
 		get_slots_less_than(const Key &key, std::vector<int> &slot_offsets) const
 		{
-			std::atomic_int *slots = this->get_slots();
+			std::atomic<int> *slots = this->get_slots();
 			bool found;
 			int pos;
 
@@ -995,7 +995,7 @@ private:
 	std::atomic<nodestate_t> m_root_state             = {};
 	std::atomic<node_t *> m_root                      = nullptr;
 
-	std::atomic_int m_height       = 0;
+	std::atomic<int> m_height      = 0;
 	std::unique_ptr<Stats> m_stats = std::make_unique<Stats>();
 
 	utils::EpochManager<uint64_t, node_t> m_gc;

@@ -8,10 +8,10 @@
 namespace btree::utils
 {
 // Max used tid
-static std::atomic_int max_used_tid = -1;
+static std::atomic<int> max_used_tid = -1;
 
 // # Registered threads at any moment
-static std::atomic_int num_registerd_threads = 0;
+static std::atomic<int> num_registerd_threads = 0;
 
 // ID of calling thread,
 static thread_local int tid = -1;

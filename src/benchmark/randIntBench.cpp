@@ -193,7 +193,7 @@ worker(std::promise<uint64_t> result,
        std::string dist,
        Map &map,
        int64_t rowcount,
-       std::atomic_int64_t &opercount,
+       std::atomic<int64_t> &opercount,
        int read_p,
        int insert_p,
        int delete_p,
@@ -305,7 +305,7 @@ do_benchmark(const BMArgs &args)
 	{
 		std::vector<std::thread> workers;
 		std::vector<std::future<uint64_t>> results;
-		std::atomic_int64_t shared_opercount{ args.opercount };
+		std::atomic<int64_t> shared_opercount{ args.opercount };
 		uint64_t num_successful_ops = 0;
 
 		auto start = std::chrono::steady_clock::now();
