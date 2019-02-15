@@ -18,7 +18,7 @@
 
 #include <type_traits>
 
-namespace btree::utils
+namespace indexes::utils
 {
 /// In functional programming, the degenerate case is often called "unit". In
 /// C++, "void" is often the best analogue. However, because of the syntactic
@@ -75,4 +75,4 @@ struct drop_unit<Unit>
 template <typename T>
 using drop_unit_t = typename drop_unit<T>::type;
 
-} // namespace btree::utils
+} // namespace indexes::utils

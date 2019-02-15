@@ -1,6 +1,6 @@
 #include "indexes/utils/Mutex.h"
 
-namespace btree::utils
+namespace indexes::utils
 {
 namespace detail
 {
@@ -9,4 +9,4 @@ namespace detail
 	    std::make_unique<std::atomic<const DeadlockSafeMutex *>[]>(ThreadLocal::MAX_THREADS);
 	std::mutex dead_lock_verify_mutex;
 } // namespace detail
-} // namespace btree::utils
+} // namespace indexes::utils

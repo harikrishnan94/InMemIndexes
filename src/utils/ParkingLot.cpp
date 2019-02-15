@@ -17,7 +17,7 @@
 
 #include <array>
 
-namespace btree::utils::parking_lot::detail
+namespace indexes::utils::parking_lot::detail
 {
 Bucket &
 Bucket::bucketFor(size_t key)
@@ -33,4 +33,4 @@ Bucket::bucketFor(size_t key)
 
 std::atomic<uint64_t> idallocator{ 0 };
 
-} // namespace btree::utils::parking_lot::detail
+} // namespace indexes::utils::parking_lot::detail

@@ -5,7 +5,7 @@
 
 #include "common.h"
 
-namespace btree
+namespace indexes::btree
 {
 template <class Key,
           class Value,
@@ -1294,4 +1294,4 @@ public:
 	BTREE_DUMP_METHODS
 };
 
-} // namespace btree
+} // namespace indexes::btree

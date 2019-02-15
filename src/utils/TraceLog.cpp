@@ -14,7 +14,7 @@
 #include <memory>
 #include <stdio.h>
 
-namespace btree::utils
+namespace indexes::utils
 {
 TraceLog TraceLog::Instance;
 
@@ -113,4 +113,4 @@ TraceLog::dumpEntireLog(const char *path, unsigned startPage)
 	fclose(f);
 }
 
-} // namespace btree::utils
+} // namespace indexes::utils

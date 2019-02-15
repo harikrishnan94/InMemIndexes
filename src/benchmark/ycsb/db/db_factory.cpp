@@ -43,16 +43,29 @@ DB *
 DBFactory::CreateDB(utils::Properties &props)
 {
 	if (props["dbname"] == "stl_map")
+	{
 		return new LockedMapDB<SCAN, std::map>;
+	}
 	else if (props["dbname"] == "stl_umap")
+	{
 		return new LockedMapDB<NOSCAN, std::unordered_map>;
+	}
 	else if (props["dbname"] == "robinmap")
+	{
 		return new LockedMapDB<NOSCAN, robin_map>;
+	}
 	else if (props["dbname"] == "btree")
-		return new LockedMapDB<SCAN, btree::map>;
+	{
+		return new LockedMapDB<SCAN, indexes::btree::map>;
+	}
 	else if (props["dbname"] == "concurrent_btree")
-		return new ConcurrentMapDB<SCAN,
-		                           btree::concurrent_map<std::string, DB::KVPair *, StringCompare>>;
+	{
+		return new ConcurrentMapDB<
+		    SCAN,
+		    indexes::btree::concurrent_map<std::string, DB::KVPair *, StringCompare>>;
+	}
 	else
+	{
 		return nullptr;
+	}
 }

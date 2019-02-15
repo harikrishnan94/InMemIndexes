@@ -15,7 +15,7 @@
 #include <memory>
 #include <mutex>
 
-namespace btree::utils
+namespace indexes::utils
 {
 //---------------------------------------------------------
 // Logs TRACE events to memory.
@@ -152,10 +152,10 @@ public:
 	static TraceLog Instance;
 };
 
-} // namespace btree::utils
+} // namespace indexes::utils
 
-#define TRACELOG(fmt, param1, param2)                                         \
-	btree::utils::TraceLog::Instance.log(fmt,                                 \
-	                                     reinterpret_cast<uintptr_t>(param1), \
-	                                     reinterpret_cast<uintptr_t>(param2))
+#define TRACELOG(fmt, param1, param2)                                           \
+	indexes::utils::TraceLog::Instance.log(fmt,                                 \
+	                                       reinterpret_cast<uintptr_t>(param1), \
+	                                       reinterpret_cast<uintptr_t>(param2))
 #define TRACELOG1(fmt, param1) TRACELOG(fmt, param1, 0UL)

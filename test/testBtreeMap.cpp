@@ -8,23 +8,23 @@
 #include <random>
 #include <string>
 
-struct btree_small_page_traits : btree::btree_traits_debug
+struct btree_small_page_traits : indexes::btree::btree_traits_debug
 {
 	static constexpr int NODE_SIZE            = 192;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
 };
 
-struct btree_traits_string_key : btree::btree_traits_debug
+struct btree_traits_string_key : indexes::btree::btree_traits_debug
 {
 	static constexpr int NODE_SIZE = 448;
 };
 
-template class btree::map<int, int, btree_small_page_traits>;
-template class btree::map<std::string, int, btree_traits_string_key>;
+template class indexes::btree::map<int, int, btree_small_page_traits>;
+template class indexes::btree::map<std::string, int, btree_traits_string_key>;
 
 TEST_CASE("BtreeMapBasic", "[btree]")
 {
-	btree::map<int, int, btree_small_page_traits> map;
+	indexes::btree::map<int, int, btree_small_page_traits> map;
 
 	int num_keys = 100000;
 
@@ -147,7 +147,7 @@ TEST_CASE("BtreeMapBasic", "[btree]")
 
 TEST_CASE("BtreeMapString", "[btree]")
 {
-	btree::map<std::string, int, btree_traits_string_key> map;
+	indexes::btree::map<std::string, int, btree_traits_string_key> map;
 
 	int num_keys = 100000;
 
@@ -245,7 +245,7 @@ TEST_CASE("BtreeMapString", "[btree]")
 
 TEST_CASE("BtreeMapMixed", "[btree]")
 {
-	btree::map<int, int, btree_small_page_traits> map;
+	indexes::btree::map<int, int, btree_small_page_traits> map;
 
 	int num_operations = 1024 * 1024;
 	int cardinality    = num_operations * 0.1;

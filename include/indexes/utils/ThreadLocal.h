@@ -1,6 +1,6 @@
 #pragma once
 
-namespace btree::utils
+namespace indexes::utils
 {
 class ThreadLocal
 {
@@ -25,4 +25,4 @@ public:
 	// This is always >= NumRegisterdThreads()
 	static int MaxThreadID();
 };
-} // namespace btree::utils
+} // namespace indexes::utils

@@ -39,33 +39,34 @@ struct LongCompare
 	}
 };
 
-struct btree_small_page_traits : btree::btree_traits_debug
+struct btree_small_page_traits : indexes::btree::btree_traits_debug
 {
 	static constexpr int NODE_SIZE            = 256;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
 };
 
-struct btree_traits_string_key : btree::btree_traits_debug
+struct btree_traits_string_key : indexes::btree::btree_traits_debug
 {
 	static constexpr int NODE_SIZE            = 448;
 	static constexpr int NODE_MERGE_THRESHOLD = 80;
 };
 
-struct btree_medium_page_traits : btree::btree_traits_default
+struct btree_medium_page_traits : indexes::btree::btree_traits_default
 {
 	static constexpr int NODE_SIZE            = 384;
 	static constexpr int NODE_MERGE_THRESHOLD = 50;
 	static constexpr bool STAT                = true;
 };
 
-template class btree::concurrent_map<int, int, IntCompare, btree_small_page_traits>;
-template class btree::concurrent_map<std::string, int, StringCompare, btree_traits_string_key>;
+template class indexes::btree::concurrent_map<int, int, IntCompare, btree_small_page_traits>;
+template class indexes::btree::
+    concurrent_map<std::string, int, StringCompare, btree_traits_string_key>;
 
 TEST_CASE("BtreeConcurrentMapBasic", "[btree]")
 {
-	btree::utils::ThreadLocal::RegisterThread();
+	indexes::utils::ThreadLocal::RegisterThread();
 
-	btree::concurrent_map<int, int, IntCompare, btree_small_page_traits> map;
+	indexes::btree::concurrent_map<int, int, IntCompare, btree_small_page_traits> map;
 
 	int num_keys = 100000;
 
@@ -180,13 +181,13 @@ TEST_CASE("BtreeConcurrentMapBasic", "[btree]")
 		REQUIRE((*map.lower_bound(key)).first == map.lower_bound(key)->first);
 	}
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 TEST_CASE("BtreeConcurrentMapString", "[btree]")
 {
-	btree::utils::ThreadLocal::RegisterThread();
-	btree::concurrent_map<std::string, int, StringCompare, btree_traits_string_key> map;
+	indexes::utils::ThreadLocal::RegisterThread();
+	indexes::btree::concurrent_map<std::string, int, StringCompare, btree_traits_string_key> map;
 
 	int num_keys = 100000;
 
@@ -276,13 +277,13 @@ TEST_CASE("BtreeConcurrentMapString", "[btree]")
 	REQUIRE(map.size() == 0);
 	REQUIRE(map.Search("").has_value() == false);
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 {
-	btree::utils::ThreadLocal::RegisterThread();
-	btree::concurrent_map<int, int, IntCompare, btree_small_page_traits> map;
+	indexes::utils::ThreadLocal::RegisterThread();
+	indexes::btree::concurrent_map<int, int, IntCompare, btree_small_page_traits> map;
 
 	int num_operations = 1024 * 1024;
 	int cardinality    = num_operations * 0.1;
@@ -367,7 +368,7 @@ TEST_CASE("BtreeConcurrentMapMixed", "[btree]")
 
 	REQUIRE(map.size() == 0);
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 static std::vector<int64_t>
@@ -413,17 +414,18 @@ generateUniqueValues(int num_threads, int perthread_count, bool contented)
 }
 
 static void
-insert_worker(btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits> &map,
-              gsl::span<int64_t> vals)
+insert_worker(
+    indexes::btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits> &map,
+    gsl::span<int64_t> vals)
 {
-	btree::utils::ThreadLocal::RegisterThread();
+	indexes::utils::ThreadLocal::RegisterThread();
 
 	for (auto val : vals)
 	{
 		map.Insert(val, val);
 	}
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 enum class OpType
@@ -434,11 +436,12 @@ enum class OpType
 };
 
 static void
-delete_worker(btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits> &map,
-              gsl::span<int64_t> vals,
-              OpType op)
+delete_worker(
+    indexes::btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits> &map,
+    gsl::span<int64_t> vals,
+    OpType op)
 {
-	btree::utils::ThreadLocal::RegisterThread();
+	indexes::utils::ThreadLocal::RegisterThread();
 
 	for (auto val : vals)
 	{
@@ -459,18 +462,18 @@ delete_worker(btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_
 		}
 	}
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 static void
 concurrent_insert_test(bool contented)
 {
-	btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits> map;
+	indexes::btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits> map;
 	constexpr int PER_THREAD_OP_COUNT = 256 * 1024;
 	constexpr int NUM_THREADS         = 4;
 	std::vector<int64_t> vals = generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, contented);
 
-	btree::utils::ThreadLocal::RegisterThread();
+	indexes::utils::ThreadLocal::RegisterThread();
 
 	auto run_test = [&](OpType op) {
 		std::vector<std::thread> workers;
@@ -533,7 +536,7 @@ concurrent_insert_test(bool contented)
 		REQUIRE(map.size() == 0);
 	}
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 TEST_CASE("BtreeConcurrentMapConcurrencyRandom", "[btree]")

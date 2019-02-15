@@ -5,7 +5,7 @@
 #include <mutex>
 #include <set>
 
-namespace btree::utils
+namespace indexes::utils
 {
 // Max used tid
 static std::atomic<int> max_used_tid = -1;
@@ -89,4 +89,4 @@ ThreadLocal::MaxThreadID()
 	return max_used_tid;
 }
 
-} // namespace btree::utils
+} // namespace indexes::utils

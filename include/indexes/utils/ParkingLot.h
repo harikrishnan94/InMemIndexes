@@ -23,7 +23,7 @@
 #include <mutex>
 #include <utility>
 
-namespace btree::utils::parking_lot
+namespace indexes::utils::parking_lot
 {
 namespace detail
 {
@@ -372,4 +372,4 @@ ParkingLot<Data>::unpark(const Key bits, Func &&func)
 		}
 	}
 }
-} // namespace btree::utils::parking_lot
+} // namespace indexes::utils::parking_lot

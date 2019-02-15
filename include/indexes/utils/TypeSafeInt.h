@@ -4,7 +4,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace btree::utils
+namespace indexes::utils
 {
 template <typename IntType, typename Tag, typename Enable = void>
 class TypeSafeInt;
@@ -290,16 +290,16 @@ private:
 	IntType m_val;
 };
 
-} // namespace btree::utils
+} // namespace indexes::utils
 
 template <typename IntType, typename Tag>
-struct std::is_integral<btree::utils::TypeSafeInt<IntType, Tag>> : public true_type
+struct std::is_integral<indexes::utils::TypeSafeInt<IntType, Tag>> : public true_type
 {};
 
 template <typename IntType, typename Tag>
-struct std::numeric_limits<btree::utils::TypeSafeInt<IntType, Tag>>
+struct std::numeric_limits<indexes::utils::TypeSafeInt<IntType, Tag>>
 {
-	using type = btree::utils::TypeSafeInt<IntType, Tag>;
+	using type = indexes::utils::TypeSafeInt<IntType, Tag>;
 
 	static constexpr bool is_specialized = true;
 
@@ -334,9 +334,9 @@ struct std::numeric_limits<btree::utils::TypeSafeInt<IntType, Tag>>
 };
 
 template <typename IntType, typename Tag>
-struct std::atomic<btree::utils::TypeSafeInt<IntType, Tag>>
+struct std::atomic<indexes::utils::TypeSafeInt<IntType, Tag>>
 {
-	using Type = btree::utils::TypeSafeInt<IntType, Tag>;
+	using Type = indexes::utils::TypeSafeInt<IntType, Tag>;
 
 	static constexpr bool is_always_lock_free = true;
 

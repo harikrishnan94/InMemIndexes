@@ -36,7 +36,7 @@ struct BMArgs
 	}
 };
 
-struct btree_big_page_traits : btree::btree_traits_default
+struct btree_big_page_traits : indexes::btree::btree_traits_default
 {
 	static constexpr int NODE_SIZE = 4 * 1024;
 };
@@ -50,7 +50,7 @@ struct LongCompare
 	}
 };
 
-using Map = btree::concurrent_map<int64_t, int64_t, LongCompare, btree_big_page_traits>;
+using Map = indexes::btree::concurrent_map<int64_t, int64_t, LongCompare, btree_big_page_traits>;
 
 static uint64_t
 hasher(uint64_t k)
@@ -158,7 +158,7 @@ insert_values(Map &map, int64_t rowcount, int num_threads)
 	for (int i = 0; i < num_threads; i++)
 	{
 		workers.emplace_back([&]() {
-			btree::utils::ThreadLocal::RegisterThread();
+			indexes::utils::ThreadLocal::RegisterThread();
 
 			do
 			{
@@ -173,7 +173,7 @@ insert_values(Map &map, int64_t rowcount, int num_threads)
 				}
 			} while (next_batch < rowcount);
 
-			btree::utils::ThreadLocal::UnregisterThread();
+			indexes::utils::ThreadLocal::UnregisterThread();
 		});
 	}
 
@@ -199,7 +199,7 @@ worker(std::promise<uint64_t> result,
        int delete_p,
        int update_p)
 {
-	btree::utils::ThreadLocal::RegisterThread();
+	indexes::utils::ThreadLocal::RegisterThread();
 
 	enum Oper
 	{
@@ -286,7 +286,7 @@ worker(std::promise<uint64_t> result,
 
 	result.set_value(num_successful_ops);
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 static void

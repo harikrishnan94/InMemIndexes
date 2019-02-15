@@ -31,8 +31,8 @@ struct LongCompare
 static void
 BM_BtreeInsert(benchmark::State &state)
 {
-	btree::utils::ThreadLocal::RegisterThread();
-	btree::concurrent_map<int64_t, int64_t, LongCompare> map;
+	indexes::utils::ThreadLocal::RegisterThread();
+	indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
 	int64_t ind = 0;
 
 	for (auto _ : state)
@@ -47,17 +47,17 @@ BM_BtreeInsert(benchmark::State &state)
 			ind = 0;
 	}
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 static void
 BM_BtreeSearch(benchmark::State &state)
 {
-	btree::utils::ThreadLocal::RegisterThread();
+	indexes::utils::ThreadLocal::RegisterThread();
 
 	int64_t ind     = 0;
 	static auto map = []() {
-		btree::concurrent_map<int64_t, int64_t, LongCompare> map;
+		indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
 
 		for (int64_t i = 0; i < MAXSIZE; i++)
 		{
@@ -79,7 +79,7 @@ BM_BtreeSearch(benchmark::State &state)
 			ind = 0;
 	}
 
-	btree::utils::ThreadLocal::UnregisterThread();
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 BENCHMARK(BM_BtreeInsert)->RangeMultiplier(4)->Range(1024, MAXSIZE);

@@ -12,7 +12,7 @@
 #include <unistd.h>
 #include <unordered_map>
 
-namespace btree::utils
+namespace indexes::utils
 {
 template <bool EnableDetectDetection>
 class MutexImpl;
@@ -229,4 +229,4 @@ public:
 	}
 };
 
-} // namespace btree::utils
+} // namespace indexes::utils

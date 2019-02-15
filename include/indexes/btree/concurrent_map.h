@@ -15,7 +15,7 @@
 #include <thread>
 #include <vector>
 
-namespace btree
+namespace indexes::btree
 {
 template <typename Key,
           typename Value,
@@ -68,7 +68,7 @@ private:
 		return atomicvar.load();
 	}
 
-	using MutexLockType = std::lock_guard<btree::utils::Mutex>;
+	using MutexLockType = std::lock_guard<indexes::utils::Mutex>;
 
 	enum class NodeType : int8_t
 	{
@@ -190,7 +190,7 @@ private:
 		const std::optional<Key> lowkey;
 		const std::optional<Key> highkey;
 
-		btree::utils::Mutex mutex;
+		indexes::utils::Mutex mutex;
 
 		inline node_t(NodeType ntype,
 		              int initialsize,
@@ -991,14 +991,14 @@ private:
 
 	static constexpr int MAXHEIGHT = 32;
 
-	std::unique_ptr<btree::utils::Mutex> m_root_mutex = std::make_unique<btree::utils::Mutex>();
-	std::atomic<nodestate_t> m_root_state             = {};
-	std::atomic<node_t *> m_root                      = nullptr;
+	std::unique_ptr<indexes::utils::Mutex> m_root_mutex = std::make_unique<indexes::utils::Mutex>();
+	std::atomic<nodestate_t> m_root_state               = {};
+	std::atomic<node_t *> m_root                        = nullptr;
 
 	std::atomic<int> m_height      = 0;
 	std::unique_ptr<Stats> m_stats = std::make_unique<Stats>();
 
-	utils::EpochManager<uint64_t, node_t> m_gc;
+	indexes::utils::EpochManager<uint64_t, node_t> m_gc;
 
 	struct EpochGuard
 	{
@@ -1347,7 +1347,7 @@ private:
 		static thread_local std::vector<node_t *> deleted_nodes;
 
 		auto res = [&]() {
-			std::vector<std::unique_lock<btree::utils::Mutex>> locks;
+			std::vector<std::unique_lock<indexes::utils::Mutex>> locks;
 			for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size()); node_ss++)
 			{
 				const NodeSnapshot &snapshot = nss_vec[node_ss];
@@ -2454,4 +2454,4 @@ public:
 	BTREE_DUMP_METHODS
 };
 
-} // namespace btree
+} // namespace indexes::btree

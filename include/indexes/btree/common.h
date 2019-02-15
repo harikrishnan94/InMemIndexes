@@ -59,7 +59,7 @@
 #define LEAF_ONLY \
 	template <typename Dummy = void, typename = typename std::enable_if_t<IsLeaf(), Dummy>>
 
-namespace btree
+namespace indexes::btree
 {
 struct btree_traits_default
 {
@@ -107,4 +107,4 @@ struct btree_stats_t
 
 struct btree_empty_stats_t
 {};
-} // namespace btree
+} // namespace indexes::btree

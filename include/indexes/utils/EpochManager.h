@@ -16,7 +16,7 @@
 
 #include <gsl/gsl>
 
-namespace btree::utils
+namespace indexes::utils
 {
 template <typename epoch_t,
           typename ReclaimedType,
@@ -272,4 +272,4 @@ private:
 	// Thread local retire list. Accessed using `slot` by each thread.
 	std::vector<std::deque<Retiree>> m_retire_list;
 };
-} // namespace btree::utils
+} // namespace indexes::utils
