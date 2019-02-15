@@ -1,4 +1,4 @@
-#include "btree/concurrent_map.h"
+#include "indexes/btree/concurrent_map.h"
 #include "sha512.h"
 
 #include <catch.hpp>

@@ -1,4 +1,4 @@
-#include "btree/map.h"
+#include "indexes/btree/map.h"
 #include "sha512.h"
 
 #include <catch.hpp>

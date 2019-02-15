@@ -8,7 +8,7 @@
   See the LICENSE file for more information.
 ------------------------------------------------------------------------*/
 
-#include "btree/utils/TraceLog.h"
+#include "indexes/utils/TraceLog.h"
 
 #include <algorithm>
 #include <memory>

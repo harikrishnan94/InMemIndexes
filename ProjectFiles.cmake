@@ -9,7 +9,7 @@ set(TEST_SRC_PATH "${PROJECT_PATH}/test")
 
 # Set library source files.
 set(SRC
-    "${SRC_PATH}/btree.cpp"
+    "${SRC_UTILS_PATH}/Mutex.cpp"
     "${SRC_UTILS_PATH}/ParkingLot.cpp"
     "${SRC_UTILS_PATH}/ThreadLocal.cpp"
     "${SRC_UTILS_PATH}/TraceLog.cpp")

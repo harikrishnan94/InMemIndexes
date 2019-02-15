@@ -1,4 +1,5 @@
-#include "btree/concurrent_map.h"
+#include "indexes/btree/concurrent_map.h"
+
 #include "utils/uniform_generator.h"
 #include "utils/zipfian_generator.h"
 

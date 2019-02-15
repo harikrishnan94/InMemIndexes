@@ -1,4 +1,5 @@
-# Concurrent Btree
+# Concurrent In-memory Indexes
+## Concurrent Btree
 
 Concurrent Btree's concurrency control is based on [Optimistic locking](https://db.in.tum.de/~leis/papers/artsync.pdf) principle. Salient features of this concurrency control are
 

@@ -1,5 +1,5 @@
 /*
- * include/btree/common.h
+ * include/indexes/btree/common.h
  * 	Contains common includes and macros b/w map and concurrent_map
  */
 

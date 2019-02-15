@@ -6,8 +6,9 @@
 //  Copyright (c) 2014 Jinglei Ren <jinglei@ren.systems>.
 //
 
-#include "btree/concurrent_map.h"
-#include "btree/map.h"
+#include "indexes/btree/concurrent_map.h"
+#include "indexes/btree/map.h"
+
 #include "db/concurrent_map_db.h"
 #include "db/db_factory.h"
 #include "db/locked_map_db.h"

@@ -1,10 +1,11 @@
-// include/btree/concurrent_map.h
+// include/indexes/btree/concurrent_map.h
 // B+Tree implementation
 
 #pragma once
 
 #include "common.h"
-#include "utils/EpochManager.h"
+#include "indexes/utils/EpochManager.h"
+#include "indexes/utils/Mutex.h"
 
 #include <atomic>
 #include <bitset>
@@ -67,7 +68,7 @@ private:
 		return atomicvar.load();
 	}
 
-	using MutexLockType = std::lock_guard<std::mutex>;
+	using MutexLockType = std::lock_guard<btree::utils::Mutex>;
 
 	enum class NodeType : int8_t
 	{
@@ -189,7 +190,7 @@ private:
 		const std::optional<Key> lowkey;
 		const std::optional<Key> highkey;
 
-		std::mutex mutex;
+		btree::utils::Mutex mutex;
 
 		inline node_t(NodeType ntype,
 		              int initialsize,
@@ -990,9 +991,9 @@ private:
 
 	static constexpr int MAXHEIGHT = 32;
 
-	std::unique_ptr<std::mutex> m_root_mutex = std::make_unique<std::mutex>();
-	std::atomic<nodestate_t> m_root_state    = {};
-	std::atomic<node_t *> m_root             = nullptr;
+	std::unique_ptr<btree::utils::Mutex> m_root_mutex = std::make_unique<btree::utils::Mutex>();
+	std::atomic<nodestate_t> m_root_state             = {};
+	std::atomic<node_t *> m_root                      = nullptr;
 
 	std::atomic_int m_height       = 0;
 	std::unique_ptr<Stats> m_stats = std::make_unique<Stats>();
@@ -1346,7 +1347,7 @@ private:
 		static thread_local std::vector<node_t *> deleted_nodes;
 
 		auto res = [&]() {
-			std::vector<std::unique_lock<std::mutex>> locks;
+			std::vector<std::unique_lock<btree::utils::Mutex>> locks;
 			for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size()); node_ss++)
 			{
 				const NodeSnapshot &snapshot = nss_vec[node_ss];
