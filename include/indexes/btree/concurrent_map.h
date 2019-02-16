@@ -1668,8 +1668,9 @@ private:
 		const NodeSnapshot &parent_snapshot = nss_vec[node_ss - 1];
 		Node *node                          = static_cast<Node *>(node_snapshot.node);
 		inner_node_t *parent                = static_cast<inner_node_t *>(parent_snapshot.node);
-
-		std::optional<MergeInfo> mergeinfo = get_merge_info(node, parent, key);
+		std::optional<MergeInfo> mergeinfo  = get_merge_info(node, parent, key);
+		Node *mergednode                    = nullptr;
+		Node *sibiling                      = nullptr;
 
 		if (mergeinfo)
 		{
@@ -1680,7 +1681,7 @@ private:
 
 			const Key &merge_key = mergeinfo->merge_key;
 			int sibilingpos      = mergeinfo->sibilingpos;
-			Node *sibiling       = static_cast<Node *>(parent->get_child(sibilingpos));
+			sibiling             = static_cast<Node *>(parent->get_child(sibilingpos));
 
 			MutexLockType sibiling_lock{ sibiling->mutex };
 			MutexLockType node_lock{ node->mutex };
@@ -1688,7 +1689,7 @@ private:
 			if (is_snapshot_stale(node_snapshot))
 				return;
 
-			Node *mergednode = sibiling->merge(node, merge_key);
+			mergednode = sibiling->merge(node, merge_key);
 
 			if (mergednode)
 			{
@@ -1698,13 +1699,15 @@ private:
 
 				sibiling->setState(sibiling->getState().set_deleted().increment_version());
 				node->setState(node->getState().set_deleted().increment_version());
-
-				m_gc.retire_in_current_epoch(node_t::free, sibiling);
-				m_gc.retire_in_current_epoch(node_t::free, node);
 			}
 		}
 
-		m_gc.switch_epoch();
+		if (mergednode)
+		{
+			m_gc.retire_in_current_epoch(node_t::free, sibiling);
+			m_gc.retire_in_current_epoch(node_t::free, node);
+			m_gc.switch_epoch();
+		}
 
 		if (parent->isUnderfull())
 			merge_node<inner_node_t>(node_ss - 1, nss_vec, key);
