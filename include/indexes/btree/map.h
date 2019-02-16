@@ -389,10 +389,7 @@ private:
 		int
 		search_inner(const Key &key) const
 		{
-			bool key_present;
-			int pos;
-
-			std::tie(pos, key_present) = lower_bound(key);
+			auto [pos, key_present] = lower_bound(key);
 
 			return !key_present ? pos - 1 : pos;
 		}
@@ -1037,11 +1034,8 @@ public:
 		if (m_root == nullptr)
 			m_root = leaf_node_t::alloc(std::nullopt, std::nullopt, 0);
 
-		int pos;
-		bool key_present;
-		leaf_node_t *leaf = get_leaf_containing(key);
-
-		std::tie(pos, key_present) = leaf->lower_bound(key);
+		leaf_node_t *leaf       = get_leaf_containing(key);
+		auto [pos, key_present] = leaf->lower_bound(key);
 
 		if (!key_present)
 		{
@@ -1080,9 +1074,7 @@ public:
 
 		if (leaf)
 		{
-			int pos;
-			bool key_present;
-			std::tie(pos, key_present) = leaf->lower_bound(key);
+			auto [pos, key_present] = leaf->lower_bound(key);
 
 			if (key_present)
 				return { this, leaf, pos };
@@ -1098,9 +1090,7 @@ public:
 
 		if (leaf)
 		{
-			int pos;
-			bool key_present;
-			std::tie(pos, key_present) = leaf->lower_bound(key);
+			auto [pos, key_present] = leaf->lower_bound(key);
 
 			if (key_present)
 				return { this, leaf, pos };

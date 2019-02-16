@@ -481,10 +481,7 @@ private:
 		int
 		search_inner(const Key &key) const
 		{
-			bool key_present;
-			int pos;
-
-			std::tie(pos, key_present) = lower_bound(key);
+			auto [pos, key_present] = lower_bound(key);
 
 			return !key_present ? pos - 1 : pos;
 		}
@@ -698,11 +695,8 @@ private:
 		inline std::optional<value_t>
 		update_leaf(const Key &key, const value_t &new_value)
 		{
-			int pos;
-			bool found;
 			std::optional<value_t> old_value = std::nullopt;
-
-			std::tie(pos, found) = lower_bound(key);
+			auto [pos, found]                = lower_bound(key);
 
 			if (found)
 			{
@@ -743,8 +737,7 @@ private:
 			{
 				int split_pos;
 				bool found;
-				int current_value_offset = this->last_value_offset - sizeof(key_value_t);
-
+				int current_value_offset   = this->last_value_offset - sizeof(key_value_t);
 				std::tie(split_pos, found) = lower_bound(split_key);
 
 				BTREE_DEBUG_ASSERT(found == false);
@@ -936,12 +929,9 @@ private:
 		get_slots_less_than(const Key &key, std::vector<int> &slot_offsets) const
 		{
 			std::atomic<int> *slots = this->get_slots();
-			bool found;
-			int pos;
+			auto [pos, found]       = lower_bound(key);
 
-			std::tie(pos, found) = lower_bound(key);
-			pos                  = found ? pos - 1 : pos;
-
+			pos = found ? pos - 1 : pos;
 			slot_offsets.clear();
 
 			for (int i = 0; i < pos; i++)
@@ -1716,8 +1706,6 @@ private:
 	std::pair<OpResult, std::optional<Value>>
 	delete_from_leaf(const Key &key, bool is_leaf_locked, NodeSnapshotVector &nss_vec)
 	{
-		int pos;
-		bool key_present;
 		NodeSnapshot &leaf_snapshot = nss_vec.back();
 		leaf_node_t *leaf           = ASLEAF(leaf_snapshot.node);
 		std::pair<OpResult, std::optional<Value>> ret{};
@@ -1732,7 +1720,7 @@ private:
 					return;
 				}
 
-				std::tie(pos, key_present) = leaf->lower_bound(key);
+				auto [pos, key_present] = leaf->lower_bound(key);
 
 				if (!key_present)
 				{
@@ -2019,11 +2007,8 @@ public:
 
 			if (leaf_snapshot.node)
 			{
-				leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
-				int pos;
-				bool key_present;
-
-				std::tie(pos, key_present) = leaf->lower_bound(key);
+				leaf_node_t *leaf       = ASLEAF(leaf_snapshot.node);
+				auto [pos, key_present] = leaf->lower_bound(key);
 
 				if (key_present)
 					val = leaf->get_key_value(pos)->second;
