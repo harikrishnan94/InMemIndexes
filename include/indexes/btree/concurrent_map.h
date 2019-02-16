@@ -380,7 +380,7 @@ private:
 		{
 			const std::atomic<int> *slots = this->get_slots();
 
-			return get_key_value_for_offset(slots[slot].load(std::memory_order_relaxed));
+			return get_key_value_for_offset(slots[slot].load(std::memory_order_acquire));
 		}
 
 		inline const Key &
@@ -405,7 +405,7 @@ private:
 		inline value_t
 		get_child(int slot) const
 		{
-			return get_child_ptr(slot)->load(std::memory_order_relaxed);
+			return get_child_ptr(slot)->load(std::memory_order_acquire);
 		}
 
 		inline const Key &
