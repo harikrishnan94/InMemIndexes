@@ -9,7 +9,6 @@
 #include <limits.h>
 #include <mutex>
 #include <thread>
-#include <unistd.h>
 #include <unordered_map>
 
 namespace indexes::utils

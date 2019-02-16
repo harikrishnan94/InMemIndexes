@@ -44,11 +44,14 @@ find_path(VCPKG_INCLUDE_DIR NAMES tsl gsl catch.hpp)
 
 include_directories(AFTER ${VCPKG_INCLUDE_DIR})
 
+set(LIBRARY_LINK_TYPE STATIC)
+
 if(NOT MSVC)
     add_compile_options("-Wall" "-pedantic")
+    set(LIBRARY_LINK_TYPE SHARED)
 endif(NOT MSVC)
 
-add_library(${LIB} SHARED ${SRC})
+add_library(${LIB} ${LIBRARY_LINK_TYPE} ${SRC})
 
 add_subdirectory(src/benchmark)
 add_subdirectory(test)
