@@ -34,8 +34,11 @@ namespace indexes::hashtable
 {
 struct hashtable_traits_default
 {
-	static constexpr bool DEBUG                  = false;
-	static constexpr uint8_t LINEAR_SEARCH_LIMIT = std::numeric_limits<uint8_t>::max();
+	static constexpr bool DEBUG = false;
+
+	using LinkType = uint8_t;
+
+	static constexpr LinkType LINEAR_SEARCH_LIMIT = std::numeric_limits<LinkType>::max();
 };
 
 struct hashtable_traits_debug : hashtable_traits_default

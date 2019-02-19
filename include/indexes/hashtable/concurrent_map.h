@@ -123,7 +123,7 @@ private:
 		size_t num_tomb_stones;
 
 		std::unique_ptr<uint8_t[]> mem;
-		std::unique_ptr<std::pair<uint8_t, uint8_t>[]> link;
+		std::unique_ptr<std::pair<typename Traits::LinkType, typename Traits::LinkType>[]> link;
 		HashBucket *buckets;
 
 		HashTable(size_t inital_num_buckets)
@@ -131,7 +131,8 @@ private:
 		    , num_values(0)
 		    , num_tomb_stones(0)
 		    , mem(std::make_unique<uint8_t[]>(num_buckets * sizeof(HashBucket)))
-		    , link(std::make_unique<std::pair<uint8_t, uint8_t>[]>(num_buckets))
+		    , link(std::make_unique<
+		           std::pair<typename Traits::LinkType, typename Traits::LinkType>[]>(num_buckets))
 		    , buckets(reinterpret_cast<HashBucket *>(mem.get()))
 		{
 			init_buckets();
@@ -198,7 +199,7 @@ private:
 		}
 
 		size_t
-		add_bucket_circular(size_t bucket, int link) const
+		add_bucket_circular(size_t bucket, uint64_t link) const
 		{
 			return (bucket + link) & (num_buckets - 1);
 		}
@@ -208,7 +209,7 @@ private:
 			size_t hash;
 			size_t ideal_bucket;
 			size_t bucket;
-			uint8_t *link;
+			typename Traits::LinkType *link;
 		};
 
 		std::pair<bool, SearchResult>
@@ -241,12 +242,12 @@ private:
 			return { false, sres };
 		}
 
-		std::optional<uint8_t>
+		std::optional<typename Traits::LinkType>
 		get_bucket_to_insert(SearchResult sres) const
 		{
 			size_t bucket = sres.bucket;
 
-			for (int link = 0; link <= Traits::LINEAR_SEARCH_LIMIT;
+			for (uint64_t link = 0; link <= Traits::LINEAR_SEARCH_LIMIT;
 			     link++, bucket = add_bucket_circular(sres.bucket, link))
 			{
 				if (buckets[bucket].is_free())
@@ -419,6 +420,12 @@ public:
 	size() const
 	{
 		return ht.num_values - ht.num_tomb_stones;
+	}
+
+	int
+	load_factor() const
+	{
+		return static_cast<int>((size() * 100) / ht.num_buckets);
 	}
 
 	bool
