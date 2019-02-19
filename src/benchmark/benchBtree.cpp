@@ -1,4 +1,5 @@
 #include "indexes/btree/concurrent_map.h"
+#include "utils/utils.h"
 
 #include <benchmark/benchmark.h>
 #include <inttypes.h>
@@ -6,18 +7,16 @@
 #include <memory>
 #include <random>
 
-constexpr int64_t MAXSIZE                    = 10 * 1024 * 1024;
-static const std::unique_ptr<int64_t[]> keys = []() {
-	auto keys = std::make_unique<int64_t[]>(MAXSIZE);
-	std::random_device r;
-	std::seed_seq seed2{ r(), r(), r(), r(), r(), r(), r(), r() };
-	std::mt19937 rnd(seed2);
-	std::uniform_int_distribution<int64_t> dist{ 1, 1000 * MAXSIZE };
+constexpr int64_t MAXSIZE = 10 * 1024 * 1024;
 
-	std::generate(keys.get(), keys.get() + MAXSIZE, [&]() { return dist(rnd); });
+static int64_t *
+get_rand_values()
+{
+	static const std::unique_ptr<int64_t[]> keys =
+	    utils::generateRandomValues<int64_t>(MAXSIZE, 1, MAXSIZE * 1000);
 
-	return keys;
-}();
+	return keys.get();
+}
 
 struct LongCompare
 {
@@ -33,7 +32,8 @@ BM_BtreeInsert(benchmark::State &state)
 {
 	indexes::utils::ThreadLocal::RegisterThread();
 	indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
-	int64_t ind = 0;
+	int64_t ind   = 0;
+	int64_t *keys = get_rand_values();
 
 	for (auto _ : state)
 	{
@@ -55,8 +55,9 @@ BM_BtreeSearch(benchmark::State &state)
 {
 	indexes::utils::ThreadLocal::RegisterThread();
 
+	int64_t *keys   = get_rand_values();
 	int64_t ind     = 0;
-	static auto map = []() {
+	static auto map = [&keys]() {
 		indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
 
 		for (int64_t i = 0; i < MAXSIZE; i++)

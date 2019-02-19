@@ -39,6 +39,7 @@ include(ProjectFiles.cmake)
 include_directories(AFTER "include")
 
 find_package(Threads)
+find_package(unofficial-abseil CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 find_path(VCPKG_INCLUDE_DIR NAMES tsl gsl catch.hpp)
 

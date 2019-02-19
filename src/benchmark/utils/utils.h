@@ -103,6 +103,21 @@ Trim(const std::string &str)
 	                       .base());
 }
 
+template <typename IntType>
+std::unique_ptr<IntType[]>
+generateRandomValues(size_t num_values, IntType start, IntType end)
+{
+	auto keys = std::make_unique<IntType[]>(num_values);
+	std::random_device r;
+	std::seed_seq seed2{ r(), r(), r(), r(), r(), r(), r(), r() };
+	std::mt19937 rnd(seed2);
+	std::uniform_int_distribution<IntType> dist{ start, end };
+
+	std::generate(keys.get(), keys.get() + num_values, [&]() { return dist(rnd); });
+
+	return keys;
+}
+
 } // namespace utils
 
 #endif // YCSB_C_UTILS_H_
