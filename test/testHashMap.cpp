@@ -46,7 +46,7 @@ TEST_CASE("HashMapBasic", "[hashtable]")
 	}
 }
 
-TEST_CASE("HashMapString", "[btree]")
+TEST_CASE("HashMapString", "[hashtable]")
 {
 	indexes::hashtable::concurrent_map<std::string, int, absl::Hash<std::string>> map;
 
