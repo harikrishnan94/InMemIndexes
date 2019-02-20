@@ -247,7 +247,7 @@ private:
 		{
 			size_t bucket = sres.bucket;
 
-			for (uint64_t link = 0; link <= Traits::LINEAR_SEARCH_LIMIT;
+			for (uint64_t link = 0; link <= Traits::LINEAR_SEARCH_LIMIT && link < num_buckets;
 			     link++, bucket = add_bucket_circular(sres.bucket, link))
 			{
 				if (buckets[bucket].is_free())
