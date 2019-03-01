@@ -3,14 +3,14 @@
 #include <tsl/robin_set.h>
 
 std::vector<int64_t>
-generateUniqueValues(int num_threads, int perthread_count, bool contented)
+generateUniqueValues(int num_threads, int perthread_count, ConcurrentMapTestWorkload workload)
 {
 	std::random_device rd;
 	std::mt19937_64 gen{ rd() };
 	int size = perthread_count * num_threads;
 	std::vector<int64_t> vals(size);
 
-	if (contented)
+	if (workload == ConcurrentMapTestWorkload::WL_CONTENTED)
 	{
 		for (int i = 0, k = 0; i < size; k++)
 		{

@@ -3,10 +3,50 @@
 
 #pragma once
 
-#include "common.h"
+#include "indexes/utils/Mutex.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <cinttypes>
+#include <cstddef>
+#include <iterator>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <ostream>
+#include <type_traits>
+#include <utility>
+
+#define HT_DEBUG(expr)     \
+	do                     \
+	{                      \
+		if (Traits::DEBUG) \
+		{                  \
+			expr;          \
+		}                  \
+	} while (0)
+
+#define HT_DEBUG_ASSERT(expr) HT_DEBUG(assert(expr))
+#define HT_DEBUG_ONLY(expr) ((void) (expr))
 
 namespace indexes::hashtable
 {
+struct hashtable_traits_default
+{
+	static constexpr bool DEBUG = false;
+
+	using LinkType = uint8_t;
+
+	static constexpr LinkType LINEAR_SEARCH_LIMIT = std::numeric_limits<LinkType>::max();
+};
+
+struct hashtable_traits_debug : hashtable_traits_default
+{
+	static constexpr bool DEBUG = true;
+};
+
 template <typename Key,
           typename Value,
           typename Hash   = std::hash<Key>,
@@ -122,8 +162,10 @@ private:
 		size_t num_values;
 		size_t num_tomb_stones;
 
+		using Link = std::tuple<typename Traits::LinkType, typename Traits::LinkType>;
+
 		std::unique_ptr<uint8_t[]> mem;
-		std::unique_ptr<std::pair<typename Traits::LinkType, typename Traits::LinkType>[]> link;
+		std::unique_ptr<Link[]> link;
 		HashBucket *buckets;
 
 		HashTable(size_t inital_num_buckets)
@@ -131,8 +173,7 @@ private:
 		    , num_values(0)
 		    , num_tomb_stones(0)
 		    , mem(std::make_unique<uint8_t[]>(num_buckets * sizeof(HashBucket)))
-		    , link(std::make_unique<
-		           std::pair<typename Traits::LinkType, typename Traits::LinkType>[]>(num_buckets))
+		    , link(std::make_unique<Link[]>(num_buckets))
 		    , buckets(reinterpret_cast<HashBucket *>(mem.get()))
 		{
 			init_buckets();
@@ -220,7 +261,7 @@ private:
 			sres.hash         = get_hash(key);
 			sres.ideal_bucket = get_ideal_bucket(sres.hash);
 			sres.bucket       = sres.ideal_bucket;
-			sres.link         = &link[sres.ideal_bucket].first;
+			sres.link         = std::addressof(std::get<0>(link[sres.ideal_bucket]));
 
 			if (buckets[sres.bucket].equals(sres.hash, key))
 				return { true, sres };
@@ -230,7 +271,7 @@ private:
 				do
 				{
 					sres.bucket = add_bucket_circular(sres.bucket, *sres.link);
-					sres.link   = &link[sres.bucket].second;
+					sres.link   = std::addressof(std::get<1>(link[sres.bucket]));
 
 					if (buckets[sres.bucket].equals(sres.hash, key))
 						return { true, sres };
@@ -307,6 +348,7 @@ private:
 		}
 	};
 
+	std::unique_ptr<indexes::utils::Mutex> m;
 	HashTable ht;
 	int num_migrations;
 
@@ -348,26 +390,8 @@ private:
 		num_migrations++;
 	}
 
-public:
-	concurrent_map(size_t initial_capacity = 4) : ht(initial_capacity), num_migrations(0)
-	{}
-
-	concurrent_map(concurrent_map &&) = default;
-
-	std::optional<mapped_type>
-	Search(const key_type &key) const
-	{
-		auto [found, sres] = ht.search(key);
-		std::optional<mapped_type> val{ std::nullopt };
-
-		if (found)
-			val = ht.buckets[sres.bucket].key_value.second;
-
-		return val;
-	}
-
 	bool
-	Insert(const key_type &key, const mapped_type &val)
+	insert_util(const key_type &key, const mapped_type &val)
 	{
 		auto [res, bucket] = ht.insert(key);
 
@@ -383,13 +407,42 @@ public:
 		else
 		{
 			migrate_table();
-			return Insert(key, val);
+			return insert_util(key, val);
 		}
+	}
+
+public:
+	concurrent_map(size_t initial_capacity = 4)
+	    : m(std::make_unique<indexes::utils::Mutex>()), ht(initial_capacity), num_migrations(0)
+	{}
+
+	concurrent_map(concurrent_map &&) = default;
+
+	std::optional<mapped_type>
+	Search(const key_type &key) const
+	{
+		std::lock_guard<indexes::utils::Mutex> lock{ *m };
+		auto [found, sres] = ht.search(key);
+		std::optional<mapped_type> val{ std::nullopt };
+
+		if (found)
+			val = ht.buckets[sres.bucket].key_value.second;
+
+		return val;
+	}
+
+	bool
+	Insert(const key_type &key, const mapped_type &val)
+	{
+		std::lock_guard<indexes::utils::Mutex> lock{ *m };
+
+		return insert_util(key, val);
 	}
 
 	std::optional<mapped_type>
 	Upsert(const key_type &key, const mapped_type &val)
 	{
+		std::lock_guard<indexes::utils::Mutex> lock{ *m };
 		auto [res, bucket] = ht.insert(key);
 		std::optional<mapped_type> oldval{ std::nullopt };
 
@@ -404,8 +457,22 @@ public:
 		else
 		{
 			migrate_table();
-			Insert(key, val);
+			insert_util(key, val);
 		}
+
+		return oldval;
+	}
+
+	std::optional<mapped_type>
+	Update(const key_type &key, const mapped_type &val)
+	{
+		std::lock_guard<indexes::utils::Mutex> lock{ *m };
+
+		std::optional<mapped_type> oldval{ std::nullopt };
+		auto [found, sres] = ht.search(key);
+
+		if (found)
+			oldval = ht.buckets[sres.bucket].exchange(val);
 
 		return oldval;
 	}
@@ -413,6 +480,7 @@ public:
 	std::optional<mapped_type>
 	Delete(const key_type &key)
 	{
+		std::lock_guard<indexes::utils::Mutex> lock{ *m };
 		return ht.erase(key);
 	}
 

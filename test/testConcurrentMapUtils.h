@@ -11,7 +11,15 @@
 #include <thread>
 #include <vector>
 
-std::vector<int64_t> generateUniqueValues(int num_threads, int perthread_count, bool contented);
+enum class ConcurrentMapTestWorkload
+{
+	WL_CONTENTED,
+	WL_RANDOM,
+};
+
+std::vector<int64_t> generateUniqueValues(int num_threads,
+                                          int perthread_count,
+                                          ConcurrentMapTestWorkload workload);
 
 template <typename MapType>
 void
@@ -157,12 +165,12 @@ delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op)
 
 template <typename MapType>
 void
-ConcurrentMapTest(bool contented)
+ConcurrentMapTest(ConcurrentMapTestWorkload workload)
 {
 	MapType map;
 	constexpr int PER_THREAD_OP_COUNT = 256 * 1024;
 	constexpr int NUM_THREADS         = 4;
-	std::vector<int64_t> vals = generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, contented);
+	std::vector<int64_t> vals = generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, workload);
 
 	indexes::utils::ThreadLocal::RegisterThread();
 

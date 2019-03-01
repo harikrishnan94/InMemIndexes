@@ -1,5 +1,6 @@
 #include "indexes/hashtable/concurrent_map.h"
 #include "sha512.h"
+#include "testConcurrentMapUtils.h"
 
 #include <absl/hash/hash.h>
 #include <catch.hpp>
@@ -81,4 +82,21 @@ TEST_CASE("HashMapString", "[hashtable]")
 	{
 		REQUIRE(*map.Delete(kv.first) == kv.second);
 	}
+}
+
+TEST_CASE("HashMapConcurrentMapMixed", "[hashtable]")
+{
+	MixedMapTest<indexes::hashtable::concurrent_map<int, int, absl::Hash<int>>>();
+}
+
+TEST_CASE("HashMapConcurrentMapConcurrencyRandom", "[hashtable]")
+{
+	ConcurrentMapTest<indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>>>(
+	    ConcurrentMapTestWorkload::WL_RANDOM);
+}
+
+TEST_CASE("HashMapConcurrentMapConcurrencyContented", "[hashtable]")
+{
+	ConcurrentMapTest<indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>>>(
+	    ConcurrentMapTestWorkload::WL_CONTENTED);
 }

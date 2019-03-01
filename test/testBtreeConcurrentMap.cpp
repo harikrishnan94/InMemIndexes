@@ -290,12 +290,12 @@ TEST_CASE("BtreeConcurrentMapConcurrencyRandom", "[btree]")
 {
 	ConcurrentMapTest<
 	    indexes::btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits>>(
-	    true);
+	    ConcurrentMapTestWorkload::WL_RANDOM);
 }
 
 TEST_CASE("BtreeConcurrentMapConcurrencyContented", "[btree]")
 {
 	ConcurrentMapTest<
 	    indexes::btree::concurrent_map<int64_t, int64_t, LongCompare, btree_medium_page_traits>>(
-	    false);
+	    ConcurrentMapTestWorkload::WL_CONTENTED);
 }
