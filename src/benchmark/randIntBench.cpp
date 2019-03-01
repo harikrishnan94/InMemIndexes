@@ -1,19 +1,49 @@
 #include "indexes/btree/concurrent_map.h"
-
+#include "indexes/hashtable/concurrent_map.h"
 #include "utils/uniform_generator.h"
 #include "utils/zipfian_generator.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cinttypes>
-#include <cxxopts.hpp>
 #include <future>
 #include <iostream>
 #include <random>
+#include <string>
 #include <thread>
+
+#include <absl/hash/hash.h>
+#include <boost/program_options.hpp>
+
+struct btree_big_page_traits : indexes::btree::btree_traits_default
+{
+	static constexpr int NODE_SIZE = 4 * 1024;
+};
+
+using u64 = uint64_t;
+
+struct LongCompare
+{
+	int
+	operator()(u64 a, u64 b) const
+	{
+		return (a < b) ? -1 : (a > b);
+	}
+};
+
+using BtreeMap = indexes::btree::concurrent_map<u64, u64, LongCompare, btree_big_page_traits>;
+using HashMap  = indexes::hashtable::concurrent_map<u64, u64, absl::Hash<u64>>;
 
 struct BMArgs
 {
+	enum class MapType
+	{
+		BtreeMap,
+		HashMap
+	};
+
+	MapType map;
 	std::string dist;
 	int64_t rowcount;
 	int64_t opercount;
@@ -35,35 +65,6 @@ struct BMArgs
 		return dist == "zipf" || dist == "uniform";
 	}
 };
-
-struct btree_big_page_traits : indexes::btree::btree_traits_default
-{
-	static constexpr int NODE_SIZE = 4 * 1024;
-};
-
-struct LongCompare
-{
-	int
-	operator()(int a, int b) const
-	{
-		return (a < b) ? -1 : (a > b);
-	}
-};
-
-using Map = indexes::btree::concurrent_map<int64_t, int64_t, LongCompare, btree_big_page_traits>;
-
-static uint64_t
-hasher(uint64_t k)
-{
-#define BIG_CONSTANT(x) (x##LLU)
-	k ^= k >> 33;
-	k *= BIG_CONSTANT(0xff51afd7ed558ccd);
-	k ^= k >> 33;
-	k *= BIG_CONSTANT(0xc4ceb9fe1a85ec53);
-	k ^= k >> 33;
-
-	return k;
-}
 
 /*
  * class Permutation - Generates permutation of k numbers, ranging from
@@ -144,8 +145,9 @@ public:
 	}
 };
 
+template <typename MapType>
 static auto
-insert_values(Map &map, int64_t rowcount, int num_threads)
+insert_values(MapType &map, int64_t rowcount, int num_threads)
 {
 	std::vector<std::thread> workers;
 	Permutation<int64_t> generator(rowcount);
@@ -162,8 +164,9 @@ insert_values(Map &map, int64_t rowcount, int num_threads)
 
 			do
 			{
-				auto start = next_batch.fetch_add(BATCH);
-				auto end   = std::min(start + BATCH, rowcount);
+				auto start  = next_batch.fetch_add(BATCH);
+				auto end    = std::min(start + BATCH, rowcount);
+				auto hasher = absl::Hash<int64_t>{};
 
 				for (auto i = start; i < end; i++)
 				{
@@ -188,10 +191,11 @@ insert_values(Map &map, int64_t rowcount, int num_threads)
 	return std::max(populate_duration.count(), static_cast<std::chrono::milliseconds::rep>(1));
 }
 
+template <typename MapType>
 static void
 worker(std::promise<uint64_t> result,
        std::string dist,
-       Map &map,
+       MapType &map,
        int64_t rowcount,
        std::atomic<int64_t> &opercount,
        int read_p,
@@ -237,6 +241,7 @@ worker(std::promise<uint64_t> result,
 	std::uniform_int_distribution<int> opdis(0, 99);
 	uint64_t num_successful_ops = 0;
 	constexpr int BATCH         = 100;
+	auto hasher                 = absl::Hash<int64_t>{};
 
 	auto get_op = [&]() {
 		auto num = opdis(gen);
@@ -289,10 +294,11 @@ worker(std::promise<uint64_t> result,
 	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
+template <typename MapType>
 static void
 do_benchmark(const BMArgs &args)
 {
-	Map map;
+	MapType map;
 
 	{
 		auto millis_elapsed = insert_values(map, args.rowcount, args.num_threads);
@@ -315,7 +321,7 @@ do_benchmark(const BMArgs &args)
 			std::promise<uint64_t> result;
 
 			results.emplace_back(result.get_future());
-			workers.emplace_back(worker,
+			workers.emplace_back(worker<MapType>,
 			                     std::move(result),
 			                     args.dist,
 			                     std::ref(map),
@@ -348,73 +354,77 @@ do_benchmark(const BMArgs &args)
 		}
 	}
 
-	map.reclaim_all();
+	// map.reclaim_all();
+}
+
+static void
+do_benchmark(const BMArgs &args)
+{
+	switch (args.map)
+	{
+		case BMArgs::MapType::HashMap:
+			do_benchmark<HashMap>(args);
+			break;
+
+		case BMArgs::MapType::BtreeMap:
+			do_benchmark<BtreeMap>(args);
+			break;
+	}
 }
 
 int
 main(int argc, char *argv[])
 {
-	cxxopts::Options options(argv[0], "Random integer benchmark");
+	namespace po = boost::program_options;
 
-	options.add_options()("R,rowcount",
-	                      "Record count",
-	                      cxxopts::value<int64_t>())("O,opercount",
-	                                                 "Operation count",
-	                                                 cxxopts::value<int64_t>());
-	options.add_options()("T,threads", "# threads to use for benchmark", cxxopts::value<int>());
-	options.add_options()("D,dist",
-	                      "Distribution of data. One of `uniform` or `zipf` distribution",
-	                      cxxopts::value<std::string>());
-	options.add_options()("r,read",
-	                      "Read proportion",
-	                      cxxopts::value<int>())("i,insert",
-	                                             "Insert proportion",
-	                                             cxxopts::value<
-	                                                 int>())("d,delete",
-	                                                         "Delete proportion",
-	                                                         cxxopts::value<
-	                                                             int>())("u,update",
-	                                                                     "Update proportion",
-	                                                                     cxxopts::value<int>());
+	po::options_description options{ "Random integer benchmark" };
+
+	options.add_options()("help,h", "Display this help message");
+
+	options.add_options()("map,m", po::value<std::string>()->required(), "Maptype Hash/Btree");
+
+	options.add_options()("rowcount,R",
+	                      po::value<int64_t>()->required(),
+	                      "Record count")("opercount,O",
+	                                      po::value<int64_t>()->required(),
+	                                      "Operation count");
+
+	options.add_options()("threads,T",
+	                      po::value<int>()->required(),
+	                      "# threads to use for benchmark");
+
+	options.add_options()("dist,D",
+	                      po::value<std::string>()->required(),
+	                      "Distribution of data. One of `uniform` or `zipf` distribution");
+
+	options.add_options()("read,r", po::value<int>()->required(), "Read proportion")(
+	    "insert,i",
+	    po::value<int>()->required(),
+	    "Insert proportion")("delete,d",
+	                         po::value<int>()->required(),
+	                         "Delete proportion")("update,u",
+	                                              po::value<int>()->required(),
+	                                              "Update proportion");
 
 	try
 	{
-		auto result = options.parse(argc, argv);
+		po::variables_map vm;
 
-		if (!result.count("rowcount"))
-			throw std::string{ "Record count is required" };
-
-		if (!result.count("opercount"))
-			throw std::string{ "Operation count" };
-
-		if (!result.count("threads"))
-			throw std::string{ "# threads is required" };
-
-		if (!result.count("dist"))
-			throw std::string{ "Distribution of data is required" };
-
-		if (!result.count("read"))
-			throw std::string{ "Read proportion" };
-
-		if (!result.count("insert"))
-			throw std::string{ "Insert proportion" };
-
-		if (!result.count("delete"))
-			throw std::string{ "Delete proportion" };
-
-		if (!result.count("update"))
-			throw std::string{ "Update proportion" };
+		po::store(po::command_line_parser(argc, argv).options(options).run(), vm);
+		po::notify(vm);
 
 		BMArgs args;
+		std::string maptype;
 
-		args.rowcount    = result["rowcount"].as<int64_t>();
-		args.opercount   = result["opercount"].as<int64_t>();
-		args.num_threads = result["threads"].as<int>();
-		args.dist        = result["dist"].as<std::string>();
-		args.read_p      = result["read"].as<int>();
-		args.insert_p    = result["insert"].as<int>();
-		args.delete_p    = result["delete"].as<int>();
-		args.update_p    = result["update"].as<int>();
+		maptype          = vm["map"].as<std::string>();
+		args.rowcount    = vm["rowcount"].as<int64_t>();
+		args.opercount   = vm["opercount"].as<int64_t>();
+		args.num_threads = vm["threads"].as<int>();
+		args.dist        = vm["dist"].as<std::string>();
+		args.read_p      = vm["read"].as<int>();
+		args.insert_p    = vm["insert"].as<int>();
+		args.delete_p    = vm["delete"].as<int>();
+		args.update_p    = vm["update"].as<int>();
 
 		if (args.rowcount % args.num_threads != 0)
 			args.rowcount = ((args.rowcount / args.num_threads) + 1) * args.num_threads;
@@ -425,15 +435,22 @@ main(int argc, char *argv[])
 		if (!args.check_distribution())
 			throw std::string{ "Unsupported data distribution requested" };
 
+		std::transform(maptype.begin(), maptype.end(), maptype.begin(), ::tolower);
+
+		if (maptype == "hash")
+			args.map = BMArgs::MapType::HashMap;
+		else if (maptype == "btree")
+			args.map = BMArgs::MapType::BtreeMap;
+
 		do_benchmark(args);
 	}
-	catch (const std::string &e)
+	catch (const po::error &ex)
 	{
-		std::cerr << "ERROR: " << e << std::endl;
-		std::cerr << options.help() << std::endl;
+		std::cerr << "ERROR: " << ex.what() << std::endl;
+		std::cerr << options << std::endl;
 	}
 	catch (...)
 	{
-		std::cerr << options.help() << std::endl;
+		std::cerr << options << std::endl;
 	}
 }
