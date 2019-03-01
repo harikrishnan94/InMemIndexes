@@ -13,7 +13,7 @@
 
 namespace indexes::utils
 {
-template <bool EnableDetectDetection>
+template <bool EnableDeadlockDetection>
 class MutexImpl;
 
 using Mutex             = MutexImpl<false>;
@@ -21,9 +21,6 @@ using DeadlockSafeMutex = MutexImpl<true>;
 
 namespace detail
 {
-	constexpr int M_CONTENDED_MASK = 1 << (sizeof(int) * CHAR_BIT - 1);
-	constexpr int M_UNLOCKED       = -1 & ~M_CONTENDED_MASK;
-
 	extern parking_lot::ParkingLot<std::nullptr_t> parkinglot;
 	extern std::unique_ptr<std::atomic<const DeadlockSafeMutex *>[]> thread_waiting_on;
 	extern std::mutex dead_lock_verify_mutex;
@@ -35,65 +32,150 @@ enum class MutexLockResult
 	DEADLOCKED
 };
 
-template <bool EnableDetectDetection>
+template <bool EnableDeadlockDetection>
 class MutexImpl
 {
 private:
-	std::atomic<int> word{ detail::M_UNLOCKED };
+	class LockWord
+	{
+		enum class LockState : int8_t
+		{
+			LS_UNLOCKED,
+			LS_LOCKED,
+			LS_CONTENTED
+		};
+
+		static constexpr int M_CONTENDED_MASK = 1 << (sizeof(int) * CHAR_BIT - 1);
+		static constexpr int M_UNLOCKED       = -1 & ~M_CONTENDED_MASK;
+
+	public:
+		using WordType = std::conditional_t<EnableDeadlockDetection, int, LockState>;
+
+	private:
+		LockWord(WordType a_word) : word(a_word)
+		{}
+
+	public:
+		WordType word;
+
+		static LockWord
+		get_unlocked_word()
+		{
+			if constexpr (EnableDeadlockDetection)
+				return M_UNLOCKED;
+			else
+				return LockState::LS_UNLOCKED;
+		}
+
+		WordType
+		get_value() const
+		{
+			return word;
+		}
+
+		bool
+		is_locked() const
+		{
+			return word != get_unlocked_word().get_value();
+		}
+
+		bool
+		is_lock_contented() const
+		{
+			if constexpr (EnableDeadlockDetection)
+				return (word & M_CONTENDED_MASK) == 0;
+			else
+				return word == LockState::LS_CONTENTED;
+		}
+
+		LockWord
+		as_uncontented_word()
+		{
+			if constexpr (EnableDeadlockDetection)
+				return word & ~M_CONTENDED_MASK;
+			else
+				return LockState::LS_LOCKED;
+		}
+
+		static LockWord
+		get_contented_word()
+		{
+			if constexpr (EnableDeadlockDetection)
+				return ThreadLocal::ThreadID() | M_CONTENDED_MASK;
+			else
+				return LockState::LS_CONTENTED;
+		}
+
+		static LockWord
+		get_lock_word()
+		{
+			if constexpr (EnableDeadlockDetection)
+				return ThreadLocal::ThreadID();
+			else
+				return LockState::LS_LOCKED;
+		}
+	};
+
+	std::atomic<LockWord> word{ LockWord::get_unlocked_word() };
 
 	bool
 	check_deadlock() const
 	{
-		std::unordered_map<int, const DeadlockSafeMutex *> waiters;
+		if constexpr (EnableDeadlockDetection)
+		{
+			std::unordered_map<int, const DeadlockSafeMutex *> waiters;
 
-		auto detect_deadlock = [&]() {
-			const DeadlockSafeMutex *waiting_on = this;
+			auto detect_deadlock = [&]() {
+				const DeadlockSafeMutex *waiting_on = this;
 
-			waiters[ThreadLocal::ThreadID()] = waiting_on;
+				waiters[ThreadLocal::ThreadID()] = waiting_on;
 
-			while (true)
-			{
-				int lock_holder = waiting_on->word & ~detail::M_CONTENDED_MASK;
+				while (true)
+				{
+					auto lock_holder = waiting_on->word.load().as_uncontented_word();
 
-				/* Lock was just released.. */
-				if (lock_holder == detail::M_UNLOCKED)
-					return false;
+					/* Lock was just released.. */
+					if (!lock_holder.is_locked())
+						return false;
 
-				waiting_on = detail::thread_waiting_on[lock_holder];
+					waiting_on = detail::thread_waiting_on[lock_holder.get_value()];
 
-				/* lock holder is live, so not a dead lock */
-				if (waiting_on == nullptr)
-					return false;
+					/* lock holder is live, so not a dead lock */
+					if (waiting_on == nullptr)
+						return false;
 
-				/* Found a cycle, so deadlock */
-				if (waiters.count(lock_holder) != 0)
-					return true;
+					/* Found a cycle, so deadlock */
+					if (waiters.count(lock_holder.get_value()) != 0)
+						return true;
 
-				waiters[lock_holder] = waiting_on;
-			}
-		};
+					waiters[lock_holder.get_value()] = waiting_on;
+				}
+			};
 
-		auto verify_deadlock = [&]() {
-			std::lock_guard<std::mutex> dead_lock_verify_lock{ detail::dead_lock_verify_mutex };
+			auto verify_deadlock = [&]() {
+				std::lock_guard<std::mutex> dead_lock_verify_lock{ detail::dead_lock_verify_mutex };
 
-			for (const auto &waiter : waiters)
-			{
-				if (waiter.second != detail::thread_waiting_on[waiter.first])
-					return false;
-			}
+				for (const auto &waiter : waiters)
+				{
+					if (waiter.second != detail::thread_waiting_on[waiter.first])
+						return false;
+				}
 
-			denounce_wait();
+				denounce_wait();
 
-			return true;
-		};
+				return true;
+			};
 
-		return detect_deadlock() && verify_deadlock();
+			return detect_deadlock() && verify_deadlock();
+		}
+
+		return false;
 	}
 
 	bool
 	park() const
 	{
-		if constexpr (EnableDetectDetection)
+		if constexpr (EnableDeadlockDetection)
 		{
 			using namespace std::chrono_literals;
 			static constexpr auto DEADLOCK_DETECT_TIMEOUT = 1s;
@@ -122,19 +204,21 @@ private:
 	void
 	announce_wait() const
 	{
-		detail::thread_waiting_on[ThreadLocal::ThreadID()] = this;
+		if constexpr (EnableDeadlockDetection)
+			detail::thread_waiting_on[ThreadLocal::ThreadID()] = this;
 	}
 
 	void
 	denounce_wait() const
 	{
-		detail::thread_waiting_on[ThreadLocal::ThreadID()] = nullptr;
+		if constexpr (EnableDeadlockDetection)
+			detail::thread_waiting_on[ThreadLocal::ThreadID()] = nullptr;
 	}
 
 	bool
 	is_lock_contented() const
 	{
-		return word & detail::M_CONTENDED_MASK;
+		return word.load().is_lock_contented();
 	}
 
 	bool
@@ -142,13 +226,13 @@ private:
 	{
 		while (true)
 		{
-			int old = word;
+			auto old = word.load();
 
-			if (old == detail::M_UNLOCKED)
+			if (!old.is_locked())
 				return true;
 
-			if (old & detail::M_CONTENDED_MASK
-			    || word.compare_exchange_strong(old, old | detail::M_CONTENDED_MASK))
+			if (old.is_lock_contented()
+			    || word.compare_exchange_strong(old, old.get_contented_word()))
 			{
 				return false;
 			}
@@ -160,10 +244,9 @@ private:
 	bool
 	try_lock_contended()
 	{
-		auto old = detail::M_UNLOCKED;
+		auto old = LockWord::get_unlocked_word();
 
-		return word.compare_exchange_strong(old,
-		                                    ThreadLocal::ThreadID() | detail::M_CONTENDED_MASK);
+		return word.compare_exchange_strong(old, LockWord::get_contented_word());
 	}
 
 	MutexLockResult
@@ -179,7 +262,7 @@ private:
 	}
 
 public:
-	static constexpr bool DEADLOCK_SAFE = EnableDetectDetection;
+	static constexpr bool DEADLOCK_SAFE = EnableDeadlockDetection;
 
 	MutexImpl()                  = default;
 	MutexImpl(MutexImpl &&)      = delete;
@@ -188,15 +271,15 @@ public:
 	bool
 	try_lock()
 	{
-		auto old = detail::M_UNLOCKED;
+		auto old = LockWord::get_unlocked_word();
 
-		return word.compare_exchange_strong(old, ThreadLocal::ThreadID());
+		return word.compare_exchange_strong(old, LockWord::get_lock_word());
 	}
 
 	bool
 	is_locked() const
 	{
-		return word != detail::M_UNLOCKED;
+		return word.load().is_locked();
 	}
 
 	MutexLockResult
@@ -218,9 +301,9 @@ public:
 	void
 	unlock()
 	{
-		int old = word.exchange(detail::M_UNLOCKED);
+		auto old = word.exchange(LockWord::get_unlocked_word());
 
-		if (old & detail::M_CONTENDED_MASK)
+		if (old.is_lock_contented())
 		{
 			detail::parkinglot.unpark(this,
 			                          [](auto) { return parking_lot::UnparkControl::RemoveBreak; });
