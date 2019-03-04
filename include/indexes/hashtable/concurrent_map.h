@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "indexes/utils/EpochManager.h"
 #include "indexes/utils/Mutex.h"
 
 #include <algorithm>
@@ -94,7 +95,7 @@ private:
 		{
 			using KeyValuePair = std::pair<key_type, mapped_type>;
 
-			size_t hash;
+			std::atomic<size_t> hash;
 			KeyValuePair key_value;
 
 			static constexpr size_t EMPTY_HASH      = std::numeric_limits<size_t>::max();
@@ -117,9 +118,10 @@ private:
 			{}
 
 			void
-			emplace(const key_type &key, const mapped_type &val)
+			emplace(size_t hash, const key_type &key, const mapped_type &val)
 			{
 				new (&this->key_value) KeyValuePair{ key, val };
+				this->hash.store(hash, std::memory_order_release);
 			}
 
 			mapped_type
@@ -127,6 +129,7 @@ private:
 			{
 				mapped_type oldval = key_value.second;
 
+				this->key_value.second.~mapped_type();
 				new (&key_value.second) mapped_type{ val };
 
 				return oldval;
@@ -135,7 +138,6 @@ private:
 			void
 			mark_as_empty()
 			{
-				this->destroy();
 				hash = TOMB_STONE_HASH;
 			}
 
@@ -159,17 +161,22 @@ private:
 		};
 
 		size_t num_buckets;
-		size_t num_values;
-		size_t num_tomb_stones;
+		std::atomic<size_t> num_values;
+		std::atomic<size_t> num_tomb_stones;
 
-		using Link = std::tuple<typename Traits::LinkType, typename Traits::LinkType>;
+		struct Link
+		{
+			std::atomic<typename Traits::LinkType> first;
+			std::atomic<typename Traits::LinkType> next;
+			indexes::utils::Mutex m;
+		};
 
 		std::unique_ptr<uint8_t[]> mem;
 		std::unique_ptr<Link[]> link;
 		HashBucket *buckets;
 
 		HashTable(size_t inital_num_buckets)
-		    : num_buckets(inital_num_buckets)
+		    : num_buckets(next_pow_2(inital_num_buckets))
 		    , num_values(0)
 		    , num_tomb_stones(0)
 		    , mem(std::make_unique<uint8_t[]>(num_buckets * sizeof(HashBucket)))
@@ -215,7 +222,7 @@ private:
 		init_buckets()
 		{
 			std::for_each(buckets, buckets + num_buckets, [](auto &bucket) {
-				bucket.hash = HashBucket::EMPTY_HASH;
+				bucket.hash.store(HashBucket::EMPTY_HASH, std::memory_order_relaxed);
 			});
 		}
 
@@ -240,7 +247,7 @@ private:
 		}
 
 		size_t
-		add_bucket_circular(size_t bucket, uint64_t link) const
+		add_bucket_circular(size_t bucket, size_t link) const
 		{
 			return (bucket + link) & (num_buckets - 1);
 		}
@@ -248,9 +255,8 @@ private:
 		struct SearchResult
 		{
 			size_t hash;
-			size_t ideal_bucket;
 			size_t bucket;
-			typename Traits::LinkType *link;
+			std::atomic<typename Traits::LinkType> *link;
 		};
 
 		std::pair<bool, SearchResult>
@@ -258,10 +264,9 @@ private:
 		{
 			SearchResult sres;
 
-			sres.hash         = get_hash(key);
-			sres.ideal_bucket = get_ideal_bucket(sres.hash);
-			sres.bucket       = sres.ideal_bucket;
-			sres.link         = std::addressof(std::get<0>(link[sres.ideal_bucket]));
+			sres.hash   = get_hash(key);
+			sres.bucket = get_ideal_bucket(sres.hash);
+			sres.link   = std::addressof(link[sres.bucket].first);
 
 			if (buckets[sres.bucket].equals(sres.hash, key))
 				return { true, sres };
@@ -271,7 +276,7 @@ private:
 				do
 				{
 					sres.bucket = add_bucket_circular(sres.bucket, *sres.link);
-					sres.link   = std::addressof(std::get<1>(link[sres.bucket]));
+					sres.link   = std::addressof(link[sres.bucket].next);
 
 					if (buckets[sres.bucket].equals(sres.hash, key))
 						return { true, sres };
@@ -288,7 +293,7 @@ private:
 		{
 			size_t bucket = sres.bucket;
 
-			for (uint64_t link = 0; link <= Traits::LINEAR_SEARCH_LIMIT && link < num_buckets;
+			for (size_t link = 0; link <= Traits::LINEAR_SEARCH_LIMIT && link < num_buckets;
 			     link++, bucket = add_bucket_circular(sres.bucket, link))
 			{
 				if (buckets[bucket].is_free())
@@ -305,123 +310,192 @@ private:
 			InsertResult_Overflow,
 		};
 
-		std::pair<InsertResult, size_t>
+		using MutexLock = std::unique_lock<indexes::utils::Mutex>;
+
+		struct InsertSearchResult
+		{
+			InsertResult res;
+			MutexLock lock;
+			typename Traits::LinkType bucket_link;
+			SearchResult sres;
+		};
+
+		InsertSearchResult
 		insert(const key_type &key)
 		{
-			auto [found, sres] = search(key);
+			bool found;
+			SearchResult sres;
 
-			if (found)
-				return { InsertResult::InsertResult_AlreadyPresent, sres.bucket };
-
-			if (auto next_bucket = get_bucket_to_insert(sres))
+			while (true)
 			{
-				size_t bucket = add_bucket_circular(sres.bucket, *next_bucket);
+				std::tie(found, sres) = search(key);
 
-				*sres.link           = *next_bucket;
-				buckets[bucket].hash = sres.hash;
-				num_values++;
+				if (found)
+				{
+					MutexLock lock{ link[sres.bucket].m };
 
-				return { InsertResult::InsertResult_New, bucket };
-			}
+					if (buckets[sres.bucket].has_value())
+					{
+						return { InsertResult::InsertResult_AlreadyPresent,
+							     std::move(lock),
+							     0,
+							     sres };
+					}
+					else
+					{
+						continue;
+					}
+				}
 
-			return { InsertResult::InsertResult_Overflow, 0 };
-		}
+				if (auto bucket_link = get_bucket_to_insert(sres))
+				{
+					sres.bucket = add_bucket_circular(sres.bucket, *bucket_link);
 
-		std::optional<mapped_type>
-		erase(const key_type &key)
-		{
-			auto [found, sres] = search(key);
-			std::optional<mapped_type> val{ std::nullopt };
+					MutexLock lock{ link[sres.bucket].m };
 
-			if (found)
-			{
-				auto &bucket = buckets[sres.bucket];
+					if (buckets[sres.bucket].is_free())
+					{
+						num_values++;
 
-				val = bucket.key_value.second;
-				bucket.mark_as_empty();
-				num_tomb_stones++;
-
-				return val;
-			}
-
-			return val;
+						return { InsertResult::InsertResult_New,
+							     std::move(lock),
+							     *bucket_link,
+							     sres };
+					}
+					else
+					{
+						continue;
+					}
+				}
+				else
+				{
+					return { InsertResult::InsertResult_Overflow, {}, 0, sres };
+				}
+			};
 		}
 	};
 
-	std::unique_ptr<indexes::utils::Mutex> m;
-	HashTable ht;
-	int num_migrations;
+	std::atomic<HashTable *> ht;
+	std::atomic<bool> is_migration_in_progress;
+	indexes::utils::Mutex migration_mutex;
+	std::atomic<int> num_migrations;
+
+	indexes::utils::EpochManager<uint64_t, void> m_gc;
+
+	struct EpochGuard
+	{
+		concurrent_map *map;
+
+		EpochGuard(concurrent_map *a_map) : map(a_map)
+		{
+			map->m_gc.enter_epoch();
+		}
+
+		~EpochGuard()
+		{
+			map->m_gc.exit_epoch();
+		}
+	};
+
+	static void
+	insert_key_val_into_ht(HashTable &ht,
+	                       typename HashTable::SearchResult &sres,
+	                       typename Traits::LinkType bucket_link,
+	                       const key_type &key,
+	                       const mapped_type &val)
+	{
+		ht.buckets[sres.bucket].emplace(sres.hash, key, val);
+		sres.link->store(bucket_link, std::memory_order_release);
+	}
 
 	bool
 	try_migrate_table(size_t new_num_buckets)
 	{
-		HashTable new_ht{ new_num_buckets };
+		auto *new_ht           = new HashTable{ new_num_buckets };
+		auto *old_ht           = ht.load();
+		size_t old_num_buckets = ht.load()->num_buckets;
 
-		for (typename HashTable::HashBucket *old_bucket = ht.buckets;
-		     old_bucket != ht.buckets + ht.num_buckets;
-		     old_bucket++)
+		for (size_t bucket = 0; bucket < old_num_buckets; bucket++)
 		{
-			if (old_bucket->has_value())
+			auto &old_bucket = ht.load()->buckets[bucket];
+			auto &link       = ht.load()->link[bucket];
+			auto bucket_lock = std::lock_guard<indexes::utils::Mutex>{ link.m };
+
+			if (old_bucket.has_value())
 			{
-				auto [res, bucket] = new_ht.insert(old_bucket->key_value.first);
+				auto ires = new_ht->insert(old_bucket.key_value.first);
 
-				HT_DEBUG_ASSERT(res != HashTable::InsertResult::InsertResult_AlreadyPresent);
+				HT_DEBUG_ASSERT(ires.res != HashTable::InsertResult::InsertResult_AlreadyPresent);
 
-				if (res == HashTable::InsertResult::InsertResult_Overflow)
+				if (ires.res == HashTable::InsertResult::InsertResult_Overflow)
 					return false;
 
-				new_ht.buckets[bucket].emplace(old_bucket->key_value.first,
-				                               old_bucket->key_value.second);
+				insert_key_val_into_ht(*new_ht,
+				                       ires.sres,
+				                       ires.bucket_link,
+				                       old_bucket.key_value.first,
+				                       old_bucket.key_value.second);
 			}
 		}
 
-		ht = std::move(new_ht);
+		ht.store(new_ht);
+		m_gc.retire_in_new_epoch([&](void *ptr) { delete reinterpret_cast<HashTable *>(ptr); },
+		                         reinterpret_cast<void *>(old_ht));
+
 		return true;
+	}
+
+	void
+	wait_for_migration_to_end()
+	{
+		std::lock_guard<indexes::utils::Mutex> migration_lock{ migration_mutex };
 	}
 
 	void
 	migrate_table()
 	{
-		size_t new_num_buckets = ht.num_buckets * 2;
+		typename HashTable::MutexLock migration_lock{ migration_mutex, std::try_to_lock };
 
-		while (!try_migrate_table(new_num_buckets))
-			;
-
-		num_migrations++;
-	}
-
-	bool
-	insert_util(const key_type &key, const mapped_type &val)
-	{
-		auto [res, bucket] = ht.insert(key);
-
-		if (res == HashTable::InsertResult::InsertResult_New)
+		if (migration_lock)
 		{
-			ht.buckets[bucket].emplace(key, val);
-			return true;
-		}
-		else if (res == HashTable::InsertResult::InsertResult_AlreadyPresent)
-		{
-			return false;
+			is_migration_in_progress = true;
+
+			size_t new_num_buckets = ht.load()->num_buckets * 2;
+
+			while (!try_migrate_table(new_num_buckets))
+				;
+
+			is_migration_in_progress = false;
+
+			num_migrations++;
 		}
 		else
 		{
-			migrate_table();
-			return insert_util(key, val);
+			wait_for_migration_to_end();
 		}
 	}
 
 public:
-	concurrent_map(size_t initial_capacity = 4)
-	    : m(std::make_unique<indexes::utils::Mutex>()), ht(initial_capacity), num_migrations(0)
+	static constexpr size_t MINIMUM_CAPACITY = 4;
+
+	concurrent_map(size_t initial_capacity = MINIMUM_CAPACITY)
+	    : ht(new HashTable(std::max(initial_capacity, MINIMUM_CAPACITY)))
+	    , is_migration_in_progress(false)
+	    , migration_mutex()
+	    , num_migrations(0)
 	{}
 
-	concurrent_map(concurrent_map &&) = default;
+	concurrent_map(concurrent_map &&o_map)
+	    : ht(o_map.ht.load()), is_migration_in_progress(false), migration_mutex(), num_migrations(0)
+	{
+		o_map.ht.store(nullptr);
+	}
 
 	std::optional<mapped_type>
-	Search(const key_type &key) const
+	Search(const key_type &key)
 	{
-		std::lock_guard<indexes::utils::Mutex> lock{ *m };
+		EpochGuard eg{ this };
+		HashTable &ht      = *this->ht.load();
 		auto [found, sres] = ht.search(key);
 		std::optional<mapped_type> val{ std::nullopt };
 
@@ -434,66 +508,167 @@ public:
 	bool
 	Insert(const key_type &key, const mapped_type &val)
 	{
-		std::lock_guard<indexes::utils::Mutex> lock{ *m };
+		while (true)
+		{
+			EpochGuard eg{ this };
+			HashTable &ht = *this->ht.load();
+			auto ires     = ht.insert(key);
 
-		return insert_util(key, val);
+			if (is_migration_in_progress)
+			{
+				if (ires.lock)
+					ires.lock.unlock();
+
+				wait_for_migration_to_end();
+				continue;
+			}
+
+			if (ires.res == HashTable::InsertResult::InsertResult_New)
+			{
+				insert_key_val_into_ht(ht, ires.sres, ires.bucket_link, key, val);
+				return true;
+			}
+
+			if (ires.res == HashTable::InsertResult::InsertResult_AlreadyPresent)
+				return false;
+
+			break;
+		}
+
+		migrate_table();
+
+		return Insert(key, val);
 	}
 
 	std::optional<mapped_type>
 	Upsert(const key_type &key, const mapped_type &val)
 	{
-		std::lock_guard<indexes::utils::Mutex> lock{ *m };
-		auto [res, bucket] = ht.insert(key);
-		std::optional<mapped_type> oldval{ std::nullopt };
+		while (true)
+		{
+			std::optional<mapped_type> oldval{ std::nullopt };
+			EpochGuard eg{ this };
+			HashTable &ht = *this->ht.load();
+			auto ires     = ht.insert(key);
 
-		if (res == HashTable::InsertResult::InsertResult_New)
-		{
-			ht.buckets[bucket].emplace(key, val);
-		}
-		else if (res == HashTable::InsertResult::InsertResult_AlreadyPresent)
-		{
-			oldval = ht.buckets[bucket].exchange(val);
-		}
-		else
-		{
-			migrate_table();
-			insert_util(key, val);
+			if (is_migration_in_progress)
+			{
+				if (ires.lock)
+					ires.lock.unlock();
+
+				wait_for_migration_to_end();
+				continue;
+			}
+
+			if (ires.res == HashTable::InsertResult::InsertResult_New)
+			{
+				insert_key_val_into_ht(ht, ires.sres, ires.bucket_link, key, val);
+				return oldval;
+			}
+
+			if (ires.res == HashTable::InsertResult::InsertResult_AlreadyPresent)
+			{
+				oldval = ht.buckets[ires.sres.bucket].exchange(val);
+				return oldval;
+			}
+
+			break;
 		}
 
-		return oldval;
+		migrate_table();
+
+		return Upsert(key, val);
 	}
 
 	std::optional<mapped_type>
 	Update(const key_type &key, const mapped_type &val)
 	{
-		std::lock_guard<indexes::utils::Mutex> lock{ *m };
-
 		std::optional<mapped_type> oldval{ std::nullopt };
-		auto [found, sres] = ht.search(key);
 
-		if (found)
-			oldval = ht.buckets[sres.bucket].exchange(val);
+		while (true)
+		{
+			EpochGuard eg{ this };
+			HashTable &ht      = *this->ht.load();
+			auto [found, sres] = ht.search(key);
 
-		return oldval;
+			if (found)
+			{
+				typename HashTable::MutexLock lock{ ht.link[sres.bucket].m };
+
+				if (is_migration_in_progress)
+				{
+					lock.unlock();
+					wait_for_migration_to_end();
+					continue;
+				}
+
+				if (ht.buckets[sres.bucket].has_value())
+					oldval = ht.buckets[sres.bucket].exchange(val);
+				else
+					continue;
+			}
+
+			return oldval;
+		}
 	}
 
 	std::optional<mapped_type>
 	Delete(const key_type &key)
 	{
-		std::lock_guard<indexes::utils::Mutex> lock{ *m };
-		return ht.erase(key);
+		std::optional<mapped_type> val{ std::nullopt };
+
+		while (true)
+		{
+			EpochGuard eg{ this };
+			HashTable &ht      = *this->ht.load();
+			auto [found, sres] = ht.search(key);
+
+			if (found)
+			{
+				auto &bucket = ht.buckets[sres.bucket];
+
+				typename HashTable::MutexLock lock{ ht.link[sres.bucket].m };
+
+				if (is_migration_in_progress)
+				{
+					lock.unlock();
+					wait_for_migration_to_end();
+					continue;
+				}
+
+				if (bucket.has_value())
+				{
+					val = bucket.key_value.second;
+					bucket.mark_as_empty();
+					ht.num_tomb_stones++;
+
+					m_gc.retire_in_new_epoch(
+					    [&](void *ptr) {
+						    reinterpret_cast<typename HashTable::HashBucket *>(ptr)->destroy();
+					    },
+					    reinterpret_cast<void *>(&bucket));
+				}
+				else
+				{
+					continue;
+				}
+			}
+
+			return val;
+		}
 	}
 
 	size_t
 	size() const
 	{
+		HashTable &ht = *this->ht.load();
 		return ht.num_values - ht.num_tomb_stones;
 	}
 
 	int
 	load_factor() const
 	{
-		return static_cast<int>((size() * 100) / ht.num_buckets);
+		HashTable &ht = *this->ht.load();
+		return static_cast<int>(((ht.num_values - ht.num_tomb_stones) * 100) / ht.num_buckets);
 	}
 
 	bool
@@ -501,5 +676,5 @@ public:
 	{
 		return size() == 0;
 	}
-};
+}; // namespace indexes::hashtable
 } // namespace indexes::hashtable

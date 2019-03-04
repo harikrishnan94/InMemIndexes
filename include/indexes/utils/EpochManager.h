@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <vector>
 
 #include <gsl/gsl>
 

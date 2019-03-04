@@ -23,9 +23,11 @@ get_rand_values()
 static void
 BM_HashTableInsert(benchmark::State &state)
 {
+	indexes::utils::ThreadLocal::RegisterThread();
 	indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>> map;
-	uint64_t ind   = 0;
-	uint64_t *keys = get_rand_values();
+	uint64_t ind             = 0;
+	uint64_t *keys           = get_rand_values();
+	uint64_t num_unique_keys = static_cast<uint64_t>(state.range(0));
 
 	for (auto _ : state)
 	{
@@ -35,27 +37,31 @@ BM_HashTableInsert(benchmark::State &state)
 
 		ind++;
 
-		if (ind == state.range(0))
+		if (ind == num_unique_keys)
 			ind = 0;
 	}
+
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 static void
 BM_HashTableSearch(benchmark::State &state)
 {
-	uint64_t *keys  = get_rand_values();
-	uint64_t ind    = 0;
-	static auto map = [&keys]() {
-		indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>> map;
+	indexes::utils::ThreadLocal::RegisterThread();
+	uint64_t *keys           = get_rand_values();
+	uint64_t ind             = 0;
+	uint64_t num_unique_keys = static_cast<uint64_t>(state.range(0));
+	static auto map          = [&keys]() {
+        indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>> map;
 
-		for (uint64_t i = 0; i < MAXSIZE; i++)
-		{
-			auto key = keys[i];
+        for (uint64_t i = 0; i < MAXSIZE; i++)
+        {
+            auto key = keys[i];
 
-			map.Insert(key, i);
-		}
+            map.Insert(key, i);
+        }
 
-		return map;
+        return map;
 	}();
 
 	for (auto _ : state)
@@ -64,9 +70,11 @@ BM_HashTableSearch(benchmark::State &state)
 
 		map.Search(key);
 
-		if (ind == state.range(0))
+		if (ind == num_unique_keys)
 			ind = 0;
 	}
+
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 BENCHMARK(BM_HashTableInsert)->RangeMultiplier(4)->Range(1024, MAXSIZE);

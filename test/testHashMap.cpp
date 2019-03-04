@@ -12,6 +12,7 @@
 
 TEST_CASE("HashMapBasic", "[hashtable]")
 {
+	indexes::utils::ThreadLocal::RegisterThread();
 	indexes::hashtable::concurrent_map<int, int, absl::Hash<uint64_t>> map;
 
 	int num_keys = 1000 * 1000;
@@ -45,10 +46,13 @@ TEST_CASE("HashMapBasic", "[hashtable]")
 	{
 		REQUIRE(*map.Delete(kv.first) == kv.second);
 	}
+
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 TEST_CASE("HashMapString", "[hashtable]")
 {
+	indexes::utils::ThreadLocal::RegisterThread();
 	indexes::hashtable::concurrent_map<std::string, int, absl::Hash<std::string>> map;
 
 	int num_keys = 1000000;
@@ -82,21 +86,17 @@ TEST_CASE("HashMapString", "[hashtable]")
 	{
 		REQUIRE(*map.Delete(kv.first) == kv.second);
 	}
+
+	indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-TEST_CASE("HashMapConcurrentMapMixed", "[hashtable]")
+TEST_CASE("HashMapMixed", "[hashtable]")
 {
 	MixedMapTest<indexes::hashtable::concurrent_map<int, int, absl::Hash<int>>>();
 }
 
-TEST_CASE("HashMapConcurrentMapConcurrencyRandom", "[hashtable]")
+TEST_CASE("HashMapConcurrencyRandom", "[hashtable]")
 {
 	ConcurrentMapTest<indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>>>(
 	    ConcurrentMapTestWorkload::WL_RANDOM);
-}
-
-TEST_CASE("HashMapConcurrentMapConcurrencyContented", "[hashtable]")
-{
-	ConcurrentMapTest<indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>>>(
-	    ConcurrentMapTestWorkload::WL_CONTENTED);
 }
