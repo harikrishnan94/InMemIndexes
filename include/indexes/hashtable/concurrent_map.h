@@ -138,7 +138,7 @@ private:
 			void
 			mark_as_empty()
 			{
-				hash = TOMB_STONE_HASH;
+				hash.store(TOMB_STONE_HASH, std::memory_order_release);
 			}
 
 			bool
@@ -160,9 +160,11 @@ private:
 			}
 		};
 
-		size_t num_buckets;
-		std::atomic<size_t> num_values;
-		std::atomic<size_t> num_tomb_stones;
+		struct alignas(128) HashTablePerThreadStats
+		{
+			std::atomic<size_t> num_values;
+			std::atomic<size_t> num_tomb_stones;
+		};
 
 		struct Link
 		{
@@ -171,14 +173,16 @@ private:
 			indexes::utils::Mutex m;
 		};
 
+		size_t num_buckets;
+		std::unique_ptr<HashTablePerThreadStats[]> stats;
+
 		std::unique_ptr<uint8_t[]> mem;
 		std::unique_ptr<Link[]> link;
 		HashBucket *buckets;
 
 		HashTable(size_t inital_num_buckets)
 		    : num_buckets(next_pow_2(inital_num_buckets))
-		    , num_values(0)
-		    , num_tomb_stones(0)
+		    , stats(std::make_unique<HashTablePerThreadStats[]>(utils::ThreadLocal::MAX_THREADS))
 		    , mem(std::make_unique<uint8_t[]>(num_buckets * sizeof(HashBucket)))
 		    , link(std::make_unique<Link[]>(num_buckets))
 		    , buckets(reinterpret_cast<HashBucket *>(mem.get()))
@@ -188,8 +192,7 @@ private:
 
 		HashTable(HashTable &&ht)
 		    : num_buckets(std::move(ht.num_buckets))
-		    , num_values(std::move(ht.num_values))
-		    , num_tomb_stones(std::move(ht.num_tomb_stones))
+		    , stats(std::move(ht.stats))
 		    , mem(std::move(ht.mem))
 		    , link(std::move(ht.link))
 		    , buckets(std::move(ht.buckets))
@@ -198,17 +201,14 @@ private:
 		HashTable &
 		operator=(HashTable &&ht)
 		{
-			num_buckets     = std::move(ht.num_buckets);
-			num_values      = std::move(ht.num_values);
-			num_tomb_stones = std::move(ht.num_tomb_stones);
-			mem             = std::move(ht.mem);
-			link            = std::move(ht.link);
-			buckets         = ht.buckets;
+			num_buckets = std::move(ht.num_buckets);
+			stats       = std::move(ht.stats);
+			mem         = std::move(ht.mem);
+			link        = std::move(ht.link);
+			buckets     = ht.buckets;
 
-			ht.buckets         = nullptr;
-			ht.num_buckets     = 0;
-			ht.num_values      = 0;
-			ht.num_tomb_stones = 0;
+			ht.buckets     = nullptr;
+			ht.num_buckets = 0;
 
 			return *this;
 		}
@@ -216,6 +216,38 @@ private:
 		~HashTable()
 		{
 			destroy_buckets();
+		}
+
+		void
+		increment_num_values()
+		{
+			std::atomic<size_t> &num_values = stats[utils::ThreadLocal::ThreadID()].num_values;
+
+			num_values.store(num_values.load() + 1, std::memory_order_relaxed);
+		}
+
+		void
+		increment_num_tomb_stones()
+		{
+			std::atomic<size_t> &num_tomb_stones =
+			    stats[utils::ThreadLocal::ThreadID()].num_tomb_stones;
+
+			num_tomb_stones.store(num_tomb_stones.load() + 1, std::memory_order_relaxed);
+		}
+
+		std::pair<size_t, size_t>
+		get_stats() const
+		{
+			size_t num_values      = 0;
+			size_t num_tomb_stones = 0;
+
+			for (int i = 0; i < utils::ThreadLocal::MAX_THREADS; i++)
+			{
+				num_values += stats[i].num_values.load(std::memory_order_relaxed);
+				num_tomb_stones += stats[i].num_tomb_stones.load(std::memory_order_relaxed);
+			}
+
+			return { num_values, num_tomb_stones };
 		}
 
 		void
@@ -355,7 +387,7 @@ private:
 
 					if (buckets[sres.bucket].is_free())
 					{
-						num_values++;
+						increment_num_values();
 
 						return { InsertResult::InsertResult_New,
 							     std::move(lock),
@@ -413,12 +445,12 @@ private:
 	{
 		auto *new_ht           = new HashTable{ new_num_buckets };
 		auto *old_ht           = ht.load();
-		size_t old_num_buckets = ht.load()->num_buckets;
+		size_t old_num_buckets = old_ht->num_buckets;
 
 		for (size_t bucket = 0; bucket < old_num_buckets; bucket++)
 		{
-			auto &old_bucket = ht.load()->buckets[bucket];
-			auto &link       = ht.load()->link[bucket];
+			auto &old_bucket = old_ht->buckets[bucket];
+			auto &link       = old_ht->link[bucket];
 			auto bucket_lock = std::lock_guard<indexes::utils::Mutex>{ link.m };
 
 			if (old_bucket.has_value())
@@ -460,7 +492,7 @@ private:
 		{
 			is_migration_in_progress = true;
 
-			size_t new_num_buckets = ht.load()->num_buckets * 2;
+			size_t new_num_buckets = next_pow_2(size() * 2);
 
 			while (!try_migrate_table(new_num_buckets))
 				;
@@ -638,8 +670,9 @@ public:
 				if (bucket.has_value())
 				{
 					val = bucket.key_value.second;
+
 					bucket.mark_as_empty();
-					ht.num_tomb_stones++;
+					ht.increment_num_tomb_stones();
 
 					m_gc.retire_in_new_epoch(
 					    [&](void *ptr) {
@@ -660,15 +693,20 @@ public:
 	size_t
 	size() const
 	{
-		HashTable &ht = *this->ht.load();
-		return ht.num_values - ht.num_tomb_stones;
+		std::atomic_thread_fence(std::memory_order_seq_cst);
+
+		auto [num_values, num_tomb_stones] = ht.load()->get_stats();
+
+		return num_values - num_tomb_stones;
 	}
 
 	int
 	load_factor() const
 	{
-		HashTable &ht = *this->ht.load();
-		return static_cast<int>(((ht.num_values - ht.num_tomb_stones) * 100) / ht.num_buckets);
+		HashTable &ht                      = *this->ht.load();
+		auto [num_values, num_tomb_stones] = ht.get_stats();
+
+		return static_cast<int>(((num_values - num_tomb_stones) * 100) / ht.num_buckets);
 	}
 
 	bool

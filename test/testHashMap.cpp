@@ -13,7 +13,9 @@
 TEST_CASE("HashMapBasic", "[hashtable]")
 {
 	indexes::utils::ThreadLocal::RegisterThread();
-	indexes::hashtable::concurrent_map<int, int, absl::Hash<uint64_t>> map;
+	indexes::hashtable::
+	    concurrent_map<int, int, absl::Hash<uint64_t>, indexes::hashtable::hashtable_traits_debug>
+	        map;
 
 	int num_keys = 1000 * 1000;
 
@@ -53,7 +55,11 @@ TEST_CASE("HashMapBasic", "[hashtable]")
 TEST_CASE("HashMapString", "[hashtable]")
 {
 	indexes::utils::ThreadLocal::RegisterThread();
-	indexes::hashtable::concurrent_map<std::string, int, absl::Hash<std::string>> map;
+	indexes::hashtable::concurrent_map<std::string,
+	                                   int,
+	                                   absl::Hash<std::string>,
+	                                   indexes::hashtable::hashtable_traits_debug>
+	    map;
 
 	int num_keys = 1000000;
 
@@ -92,11 +98,18 @@ TEST_CASE("HashMapString", "[hashtable]")
 
 TEST_CASE("HashMapMixed", "[hashtable]")
 {
-	MixedMapTest<indexes::hashtable::concurrent_map<int, int, absl::Hash<int>>>();
+	MixedMapTest<indexes::hashtable::concurrent_map<int,
+	                                                int,
+	                                                absl::Hash<int>,
+	                                                indexes::hashtable::hashtable_traits_debug>>();
 }
 
 TEST_CASE("HashMapConcurrencyRandom", "[hashtable]")
 {
-	ConcurrentMapTest<indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>>>(
+	ConcurrentMapTest<
+	    indexes::hashtable::concurrent_map<uint64_t,
+	                                       uint64_t,
+	                                       absl::Hash<uint64_t>,
+	                                       indexes::hashtable::hashtable_traits_debug>>(
 	    ConcurrentMapTestWorkload::WL_RANDOM);
 }
