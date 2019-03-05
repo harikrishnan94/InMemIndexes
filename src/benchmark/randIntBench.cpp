@@ -213,19 +213,24 @@ worker(std::promise<uint64_t> result,
 		UPDATE
 	};
 
-	ycsbc::ZipfianGenerator zgenerator{ 0, static_cast<uint64_t>(rowcount) };
-	ycsbc::UniformGenerator ugenerator{ 0, static_cast<uint64_t>(rowcount) }; // TODO
-
 	auto get_key = [&]() {
 		if (dist == "zipf")
 		{
-			return static_cast<std::function<uint64_t()>>(
-			    [&]() { return zgenerator.NextUnlocked(); });
+			return static_cast<std::function<uint64_t()>>([&]() {
+				static thread_local ycsbc::ZipfianGenerator zgenerator{ 0,
+					                                                    static_cast<uint64_t>(
+					                                                        rowcount) };
+				return zgenerator.NextUnlocked();
+			});
 		}
 		else if (dist == "uniform")
 		{
-			return static_cast<std::function<uint64_t()>>(
-			    [&]() { return ugenerator.NextUnlocked(); });
+			return static_cast<std::function<uint64_t()>>([&]() {
+				static thread_local ycsbc::UniformGenerator ugenerator{ 0,
+					                                                    static_cast<uint64_t>(
+					                                                        rowcount) };
+				return ugenerator.NextUnlocked();
+			});
 		}
 		else
 		{
