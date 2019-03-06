@@ -1962,6 +1962,11 @@ public:
 		moved.m_height.store(0);
 	}
 
+	void reserve(size_t)
+	{
+		// No-op
+	}
+
 	bool
 	Insert(const Key &key, const Value &val)
 	{

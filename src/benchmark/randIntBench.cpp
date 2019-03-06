@@ -301,9 +301,22 @@ worker(std::promise<uint64_t> result,
 
 template <typename MapType>
 static void
+map_reserve(MapType &map, const BMArgs &args)
+{
+	indexes::utils::ThreadLocal::RegisterThread();
+
+	map.reserve(args.rowcount);
+
+	indexes::utils::ThreadLocal::UnregisterThread();
+}
+
+template <typename MapType>
+static void
 do_benchmark(const BMArgs &args)
 {
 	MapType map;
+
+	map_reserve(map, args);
 
 	{
 		auto millis_elapsed = insert_values(map, args.rowcount, args.num_threads);

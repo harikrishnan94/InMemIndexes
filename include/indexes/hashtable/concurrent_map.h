@@ -484,7 +484,7 @@ private:
 	}
 
 	void
-	migrate_table()
+	migrate_table(size_t new_num_buckets = 0)
 	{
 		typename HashTable::MutexLock migration_lock{ migration_mutex, std::try_to_lock };
 
@@ -492,10 +492,15 @@ private:
 		{
 			is_migration_in_progress = true;
 
-			size_t new_num_buckets = next_pow_2(size() * 2);
+			if (new_num_buckets == 0)
+				new_num_buckets = size() * 2;
+
+			new_num_buckets = next_pow_2(new_num_buckets);
 
 			while (!try_migrate_table(new_num_buckets))
-				;
+			{
+				new_num_buckets *= 2;
+			}
 
 			is_migration_in_progress = false;
 
@@ -521,6 +526,12 @@ public:
 	    : ht(o_map.ht.load()), is_migration_in_progress(false), migration_mutex(), num_migrations(0)
 	{
 		o_map.ht.store(nullptr);
+	}
+
+	void
+	reserve(size_t num_values)
+	{
+		migrate_table(num_values * 2);
 	}
 
 	std::optional<mapped_type>
