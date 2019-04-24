@@ -34,7 +34,7 @@ class EpochManager<
     typename std::enable_if_t<
         (ReclamationThreshold > 0)
         && std::is_integral_v<
-               epoch_t> && !std::is_same_v<epoch_t, bool> && !std::is_same_v<epoch_t, char>>>
+            epoch_t> && !std::is_same_v<epoch_t, bool> && !std::is_same_v<epoch_t, char>>>
 {
 	// Calling thread must be registered by calling `RegisterThread` before using epoch based safe
 	// memory reclamation.

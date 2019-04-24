@@ -368,10 +368,9 @@ private:
 
 					if (buckets[sres.bucket].has_value())
 					{
-						return { InsertResult::InsertResult_AlreadyPresent,
-							     std::move(lock),
-							     0,
-							     sres };
+						return {
+							InsertResult::InsertResult_AlreadyPresent, std::move(lock), 0, sres
+						};
 					}
 					else
 					{
@@ -389,10 +388,9 @@ private:
 					{
 						increment_num_values();
 
-						return { InsertResult::InsertResult_New,
-							     std::move(lock),
-							     *bucket_link,
-							     sres };
+						return {
+							InsertResult::InsertResult_New, std::move(lock), *bucket_link, sres
+						};
 					}
 					else
 					{

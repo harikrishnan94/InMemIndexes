@@ -217,18 +217,18 @@ worker(std::promise<uint64_t> result,
 		if (dist == "zipf")
 		{
 			return static_cast<std::function<uint64_t()>>([&]() {
-				static thread_local ycsbc::ZipfianGenerator zgenerator{ 0,
-					                                                    static_cast<uint64_t>(
-					                                                        rowcount) };
+				static thread_local ycsbc::ZipfianGenerator zgenerator{
+					0, static_cast<uint64_t>(rowcount)
+				};
 				return zgenerator.NextUnlocked();
 			});
 		}
 		else if (dist == "uniform")
 		{
 			return static_cast<std::function<uint64_t()>>([&]() {
-				static thread_local ycsbc::UniformGenerator ugenerator{ 0,
-					                                                    static_cast<uint64_t>(
-					                                                        rowcount) };
+				static thread_local ycsbc::UniformGenerator ugenerator{
+					0, static_cast<uint64_t>(rowcount)
+				};
 				return ugenerator.NextUnlocked();
 			});
 		}

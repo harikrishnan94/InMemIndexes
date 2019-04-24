@@ -182,11 +182,12 @@ private:
 
 			announce_wait();
 
-			auto res = detail::parkinglot.park_for(this,
-			                                       nullptr,
-			                                       [&]() { return is_lock_contented(); },
-			                                       []() {},
-			                                       DEADLOCK_DETECT_TIMEOUT);
+			auto res = detail::parkinglot.park_for(
+			    this,
+			    nullptr,
+			    [&]() { return is_lock_contented(); },
+			    []() {},
+			    DEADLOCK_DETECT_TIMEOUT);
 
 			if (res == parking_lot::ParkResult::Timeout && check_deadlock())
 				return true;
@@ -195,7 +196,8 @@ private:
 		}
 		else
 		{
-			detail::parkinglot.park(this, nullptr, [&]() { return is_lock_contented(); }, []() {});
+			detail::parkinglot.park(
+			    this, nullptr, [&]() { return is_lock_contented(); }, []() {});
 		}
 
 		return false;
