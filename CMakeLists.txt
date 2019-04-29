@@ -52,19 +52,13 @@ if(NOT MSVC)
     set(LIBRARY_LINK_TYPE SHARED)
 endif(NOT MSVC)
 
+if(BUILD_COVERAGE_ANALYSIS)
+    include(CodeCoverage.cmake)
+    append_coverage_compiler_flags()
+    setup_target_for_coverage_lcov(NAME coverage EXECUTABLE ${TEST} DEPENDENCIES ${TEST})
+endif(BUILD_COVERAGE_ANALYSIS)
+
 add_library(${LIB} ${LIBRARY_LINK_TYPE} ${SRC})
 
 add_subdirectory(src/benchmark)
 add_subdirectory(test)
-
-if(BUILD_COVERAGE_ANALYSIS)
-    include(CodeCoverage.cmake)
-    message(STATUS "Enabling Code Coverage")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-arcs -ftest-coverage")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
-    set(COVERAGE_EXTRACT
-        '${CMAKE_CURRENT_SOURCE_DIR}/include/*'
-        '${CMAKE_CURRENT_SOURCE_DIR}/src/*'
-        '${CMAKE_CURRENT_SOURCE_DIR}/test/*')
-    setup_target_for_coverage(coverage "${TEST}" coverage)
-endif(BUILD_COVERAGE_ANALYSIS)
