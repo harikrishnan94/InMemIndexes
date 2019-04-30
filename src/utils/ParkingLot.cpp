@@ -17,20 +17,17 @@
 
 #include <array>
 
-namespace indexes::utils::parking_lot::detail
-{
-Bucket &
-Bucket::bucketFor(size_t key)
-{
-	constexpr size_t kNumBuckets = 1 << 16;
+namespace indexes::utils::parking_lot::detail {
+Bucket &Bucket::bucketFor(size_t key) {
+  constexpr size_t kNumBuckets = 1 << 16;
 
-	// Statically allocating this lets us use this in allocation-sensitive
-	// contexts. This relies on the assumption that std::mutex won't dynamically
-	// allocate memory, which we assume to be the case on Linux and iOS.
-	static std::array<Bucket, kNumBuckets> gBuckets;
-	return gBuckets[key % kNumBuckets];
+  // Statically allocating this lets us use this in allocation-sensitive
+  // contexts. This relies on the assumption that std::mutex won't dynamically
+  // allocate memory, which we assume to be the case on Linux and iOS.
+  static std::array<Bucket, kNumBuckets> gBuckets;
+  return gBuckets[key % kNumBuckets];
 }
 
-std::atomic<uint64_t> idallocator{ 0 };
+std::atomic<uint64_t> idallocator{0};
 
 } // namespace indexes::utils::parking_lot::detail

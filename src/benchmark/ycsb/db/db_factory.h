@@ -12,12 +12,10 @@
 #include "core/db.h"
 #include "utils/properties.h"
 
-namespace ycsbc
-{
-class DBFactory
-{
+namespace ycsbc {
+class DBFactory {
 public:
-	static DB *CreateDB(utils::Properties &props);
+  static DB *CreateDB(utils::Properties &props);
 };
 
 } // namespace ycsbc

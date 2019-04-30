@@ -9,78 +9,66 @@
 
 constexpr int64_t MAXSIZE = 10 * 1024 * 1024;
 
-static int64_t *
-get_rand_values()
-{
-	static const std::unique_ptr<int64_t[]> keys =
-	    utils::generateRandomValues<int64_t>(MAXSIZE, 1, MAXSIZE * 1000);
+static int64_t *get_rand_values() {
+  static const std::unique_ptr<int64_t[]> keys =
+      utils::generateRandomValues<int64_t>(MAXSIZE, 1, MAXSIZE * 1000);
 
-	return keys.get();
+  return keys.get();
 }
 
-struct LongCompare
-{
-	inline int
-	operator()(int64_t a, int64_t b) const
-	{
-		return (a < b) ? -1 : (a > b);
-	}
+struct LongCompare {
+  inline int operator()(int64_t a, int64_t b) const {
+    return (a < b) ? -1 : (a > b);
+  }
 };
 
-static void
-BM_BtreeInsert(benchmark::State &state)
-{
-	indexes::utils::ThreadLocal::RegisterThread();
-	indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
-	int64_t ind   = 0;
-	int64_t *keys = get_rand_values();
+static void BM_BtreeInsert(benchmark::State &state) {
+  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
+  int64_t ind = 0;
+  int64_t *keys = get_rand_values();
 
-	for (auto _ : state)
-	{
-		auto key = keys[ind];
+  for (auto _ : state) {
+    auto key = keys[ind];
 
-		map.Insert(key, ind);
+    map.Insert(key, ind);
 
-		ind++;
+    ind++;
 
-		if (ind == state.range(0))
-			ind = 0;
-	}
+    if (ind == state.range(0))
+      ind = 0;
+  }
 
-	indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-static void
-BM_BtreeSearch(benchmark::State &state)
-{
-	indexes::utils::ThreadLocal::RegisterThread();
+static void BM_BtreeSearch(benchmark::State &state) {
+  indexes::utils::ThreadLocal::RegisterThread();
 
-	int64_t *keys   = get_rand_values();
-	int64_t ind     = 0;
-	static auto map = [&keys]() {
-		indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
+  int64_t *keys = get_rand_values();
+  int64_t ind = 0;
+  static auto map = [&keys]() {
+    indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
 
-		for (int64_t i = 0; i < MAXSIZE; i++)
-		{
-			auto key = keys[i];
+    for (int64_t i = 0; i < MAXSIZE; i++) {
+      auto key = keys[i];
 
-			map.Insert(key, i);
-		}
+      map.Insert(key, i);
+    }
 
-		return map;
-	}();
+    return map;
+  }();
 
-	for (auto _ : state)
-	{
-		auto key = keys[ind++];
+  for (auto _ : state) {
+    auto key = keys[ind++];
 
-		map.Search(key);
+    map.Search(key);
 
-		if (ind == state.range(0))
-			ind = 0;
-	}
+    if (ind == state.range(0))
+      ind = 0;
+  }
 
-	indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 BENCHMARK(BM_BtreeInsert)->RangeMultiplier(4)->Range(1024, MAXSIZE);

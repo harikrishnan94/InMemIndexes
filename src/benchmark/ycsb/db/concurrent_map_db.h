@@ -6,193 +6,148 @@
 #include <string>
 #include <vector>
 
-namespace ycsbc
-{
+namespace ycsbc {
 template <bool ScanSupported, typename MapType>
-class ConcurrentMapDB : public DB
-{
+class ConcurrentMapDB : public DB {
 public:
-	void
-	Init()
-	{}
+  void Init() {}
 
-	int
-	Read(const std::string &table,
-	     const std::string &key,
-	     const DB::FieldSet *fields,
-	     int field_count,
-	     std::vector<KVPair> &result)
-	{
-		std::string keyind = table + key;
+  int Read(const std::string &table, const std::string &key,
+           const DB::FieldSet *fields, int field_count,
+           std::vector<KVPair> &result) {
+    std::string keyind = table + key;
 
-		return Read(keyind, fields, field_count, result);
-	}
+    return Read(keyind, fields, field_count, result);
+  }
 
-	int
-	Scan(const std::string &table,
-	     const std::string &key,
-	     int record_count,
-	     const DB::FieldSet *fields,
-	     int field_count,
-	     std::vector<std::vector<KVPair>> &result)
-	{
-		if constexpr (ScanSupported)
-		{
-			std::string keyind = table + key;
+  int Scan(const std::string &table, const std::string &key, int record_count,
+           const DB::FieldSet *fields, int field_count,
+           std::vector<std::vector<KVPair>> &result) {
+    if constexpr (ScanSupported) {
+      std::string keyind = table + key;
 
-			return Scan(keyind, record_count, fields, field_count, result);
-		}
-		else
-		{
-			throw "Scan: function not implemented!";
-		}
-	}
+      return Scan(keyind, record_count, fields, field_count, result);
+    } else {
+      throw "Scan: function not implemented!";
+    }
+  }
 
-	int
-	Update(const std::string &table, const std::string &key, int field_count, DB::FieldMap &values)
-	{
-		std::string keyind = table + key;
+  int Update(const std::string &table, const std::string &key, int field_count,
+             DB::FieldMap &values) {
+    std::string keyind = table + key;
 
-		return Update(keyind, field_count, values);
-	}
+    return Update(keyind, field_count, values);
+  }
 
-	int
-	Insert(const std::string &table, const std::string &key, std::vector<KVPair> &values)
-	{
-		return insert(table + key, values);
-	}
+  int Insert(const std::string &table, const std::string &key,
+             std::vector<KVPair> &values) {
+    return insert(table + key, values);
+  }
 
-	int
-	Delete(const std::string &table, const std::string &key)
-	{
-		std::string keyind = table + key;
-		KVPair *fields     = nullptr;
+  int Delete(const std::string &table, const std::string &key) {
+    std::string keyind = table + key;
+    KVPair *fields = nullptr;
 
-		fields = Delete(key);
+    fields = Delete(key);
 
-		if (fields)
-			delete[] fields;
+    if (fields)
+      delete[] fields;
 
-		return fields ? DB::kOK : DB::kErrorNoData;
-	}
+    return fields ? DB::kOK : DB::kErrorNoData;
+  }
 
 private:
-	MapType db;
+  MapType db;
 
-	int
-	Read(std::string &key, const DB::FieldSet *fields, int field_count, std::vector<KVPair> &result)
-	{
-		auto val = db.Search(key);
+  int Read(std::string &key, const DB::FieldSet *fields, int field_count,
+           std::vector<KVPair> &result) {
+    auto val = db.Search(key);
 
-		if (!val)
-			return DB::kErrorNoData;
+    if (!val)
+      return DB::kErrorNoData;
 
-		result.clear();
-		get_fields(result, fields, field_count, *val);
+    result.clear();
+    get_fields(result, fields, field_count, *val);
 
-		return DB::kOK;
-	}
+    return DB::kOK;
+  }
 
-	int
-	Scan(std::string &key,
-	     int record_count,
-	     const DB::FieldSet *fields,
-	     int field_count,
-	     std::vector<std::vector<KVPair>> &result)
-	{
-		result.clear();
+  int Scan(std::string &key, int record_count, const DB::FieldSet *fields,
+           int field_count, std::vector<std::vector<KVPair>> &result) {
+    result.clear();
 
-		for (auto it = db.lower_bound(key); it != db.end() && record_count; ++it, --record_count)
-		{
-			result.push_back(get_fields(fields, field_count, it->second));
-		}
+    for (auto it = db.lower_bound(key); it != db.end() && record_count;
+         ++it, --record_count) {
+      result.push_back(get_fields(fields, field_count, it->second));
+    }
 
-		return DB::kOK;
-	}
+    return DB::kOK;
+  }
 
-	int
-	Update(const std::string &key, int field_count, DB::FieldMap &values)
-	{
-		auto val = db.Search(key);
+  int Update(const std::string &key, int field_count, DB::FieldMap &values) {
+    auto val = db.Search(key);
 
-		if (!val)
-			return insert(key, values);
+    if (!val)
+      return insert(key, values);
 
-		KVPair *fields  = new KVPair[field_count];
-		int num_updates = values.size();
+    KVPair *fields = new KVPair[field_count];
+    int num_updates = values.size();
 
-		std::copy(*val, *val + field_count, fields);
+    std::copy(*val, *val + field_count, fields);
 
-		for (int i = 0; (i < field_count) && num_updates; i++)
-		{
-			KVPair &field = fields[i];
-			auto it       = values.find(field.first);
+    for (int i = 0; (i < field_count) && num_updates; i++) {
+      KVPair &field = fields[i];
+      auto it = values.find(field.first);
 
-			if (it != values.end())
-			{
-				field.second = it->second;
-				num_updates--;
-			}
-		}
+      if (it != values.end()) {
+        field.second = it->second;
+        num_updates--;
+      }
+    }
 
-		return DB::kOK;
-	}
+    return DB::kOK;
+  }
 
-	KVPair *
-	Delete(const std::string &key)
-	{
-		auto val = db.Delete(key);
+  KVPair *Delete(const std::string &key) {
+    auto val = db.Delete(key);
 
-		return val ? *val : nullptr;
-	}
+    return val ? *val : nullptr;
+  }
 
-	template <typename Cont>
-	int
-	insert(const std::string &key, Cont &values)
-	{
-		KVPair *fields = new KVPair[values.size()];
+  template <typename Cont> int insert(const std::string &key, Cont &values) {
+    KVPair *fields = new KVPair[values.size()];
 
-		std::copy(std::begin(values), std::end(values), fields);
+    std::copy(std::begin(values), std::end(values), fields);
 
-		return db.Insert(key, fields) ? DB::kOK : DB::kErrorConflict;
-	}
+    return db.Insert(key, fields) ? DB::kOK : DB::kErrorConflict;
+  }
 
-	std::vector<KVPair>
-	get_fields(const DB::FieldSet *fields, int field_count, const KVPair *fieldvec)
-	{
-		std::vector<KVPair> result;
+  std::vector<KVPair> get_fields(const DB::FieldSet *fields, int field_count,
+                                 const KVPair *fieldvec) {
+    std::vector<KVPair> result;
 
-		get_fields(result, fields, field_count, fieldvec);
+    get_fields(result, fields, field_count, fieldvec);
 
-		return result;
-	}
+    return result;
+  }
 
-	void
-	get_fields(std::vector<KVPair> &result,
-	           const DB::FieldSet *fields,
-	           int field_count,
-	           const KVPair *fieldvec)
-	{
-		if (!fields)
-		{
-			result = std::vector<KVPair>{ fieldvec, fieldvec + field_count };
-		}
-		else
-		{
-			int num_field_reads = fields->size();
+  void get_fields(std::vector<KVPair> &result, const DB::FieldSet *fields,
+                  int field_count, const KVPair *fieldvec) {
+    if (!fields) {
+      result = std::vector<KVPair>{fieldvec, fieldvec + field_count};
+    } else {
+      int num_field_reads = fields->size();
 
-			for (int i = 0; (i < field_count) && num_field_reads; i++)
-			{
-				const KVPair &field = fieldvec[i];
+      for (int i = 0; (i < field_count) && num_field_reads; i++) {
+        const KVPair &field = fieldvec[i];
 
-				if (fields->count(field.first))
-				{
-					result.push_back(field);
-					num_field_reads--;
-				}
-			}
-		}
-	}
+        if (fields->count(field.first)) {
+          result.push_back(field);
+          num_field_reads--;
+        }
+      }
+    }
+  }
 };
 
 } // namespace ycsbc

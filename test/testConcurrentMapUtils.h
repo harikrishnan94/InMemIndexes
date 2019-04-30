@@ -11,229 +11,191 @@
 #include <thread>
 #include <vector>
 
-enum class ConcurrentMapTestWorkload
-{
-	WL_CONTENTED,
-	WL_RANDOM,
+enum class ConcurrentMapTestWorkload {
+  WL_CONTENTED,
+  WL_RANDOM,
 };
 
-std::vector<int64_t> generateUniqueValues(int num_threads,
-                                          int perthread_count,
+std::vector<int64_t> generateUniqueValues(int num_threads, int perthread_count,
                                           ConcurrentMapTestWorkload workload);
 
-template <typename MapType>
-void
-MixedMapTest()
-{
-	indexes::utils::ThreadLocal::RegisterThread();
+template <typename MapType> void MixedMapTest() {
+  indexes::utils::ThreadLocal::RegisterThread();
 
-	MapType map;
+  MapType map;
 
-	int num_operations = 1024 * 1024;
-	int cardinality    = num_operations * 0.1;
+  int num_operations = 1024 * 1024;
+  int cardinality = num_operations * 0.1;
 
-	constexpr auto INSERT_OP = 1;
-	constexpr auto LOOKUP_OP = 2;
-	constexpr auto DELETE_OP = 3;
+  constexpr auto INSERT_OP = 1;
+  constexpr auto LOOKUP_OP = 2;
+  constexpr auto DELETE_OP = 3;
 
-	std::random_device r;
-	std::seed_seq seed{ r(), r(), r(), r(), r(), r(), r(), r() };
-	std::mt19937 rnd(seed);
+  std::random_device r;
+  std::seed_seq seed{r(), r(), r(), r(), r(), r(), r(), r()};
+  std::mt19937 rnd(seed);
 
-	std::uniform_int_distribution<int> key_dist{ 1, cardinality };
-	std::uniform_int_distribution<int> val_dist;
-	std::uniform_int_distribution<> op_dist{ INSERT_OP, DELETE_OP };
+  std::uniform_int_distribution<int> key_dist{1, cardinality};
+  std::uniform_int_distribution<int> val_dist;
+  std::uniform_int_distribution<> op_dist{INSERT_OP, DELETE_OP};
 
-	std::map<int, int> key_values;
+  std::map<int, int> key_values;
 
-	for (int i = 0; i < num_operations; i++)
-	{
-		const auto key = key_dist(rnd);
-		const auto op  = op_dist(rnd);
-		int val;
+  for (int i = 0; i < num_operations; i++) {
+    const auto key = key_dist(rnd);
+    const auto op = op_dist(rnd);
+    int val;
 
-		switch (op)
-		{
-			case INSERT_OP:
-			{
-				val = val_dist(rnd);
+    switch (op) {
+    case INSERT_OP: {
+      val = val_dist(rnd);
 
-				if (key_values.count(key))
-				{
-					REQUIRE(*map.Search(key) == key_values[key]);
-					REQUIRE(*map.Update(key, val) == key_values[key]);
-				}
-				else
-				{
-					REQUIRE(map.Insert(key, val) == true);
-					REQUIRE(*map.Search(key) == val);
-				}
+      if (key_values.count(key)) {
+        REQUIRE(*map.Search(key) == key_values[key]);
+        REQUIRE(*map.Update(key, val) == key_values[key]);
+      } else {
+        REQUIRE(map.Insert(key, val) == true);
+        REQUIRE(*map.Search(key) == val);
+      }
 
-				key_values[key] = val;
-				break;
-			}
+      key_values[key] = val;
+      break;
+    }
 
-			case LOOKUP_OP:
-			{
-				if (key_values.count(key))
-					REQUIRE(*map.Search(key) == key_values[key]);
-				else
-					REQUIRE(map.Search(key).has_value() == false);
+    case LOOKUP_OP: {
+      if (key_values.count(key))
+        REQUIRE(*map.Search(key) == key_values[key]);
+      else
+        REQUIRE(map.Search(key).has_value() == false);
 
-				break;
-			}
+      break;
+    }
 
-			case DELETE_OP:
-			{
-				if (key_values.count(key))
-				{
-					REQUIRE(*map.Search(key) == key_values[key]);
-					REQUIRE(*map.Delete(key) == key_values[key]);
-					key_values.erase(key);
-				}
-				else
-				{
-					REQUIRE(map.Delete(key).has_value() == false);
-				}
-				break;
-			}
+    case DELETE_OP: {
+      if (key_values.count(key)) {
+        REQUIRE(*map.Search(key) == key_values[key]);
+        REQUIRE(*map.Delete(key) == key_values[key]);
+        key_values.erase(key);
+      } else {
+        REQUIRE(map.Delete(key).has_value() == false);
+      }
+      break;
+    }
 
-			default:
-				continue;
-		}
-	}
+    default:
+      continue;
+    }
+  }
 
-	REQUIRE(map.size() == key_values.size());
+  REQUIRE(map.size() == key_values.size());
 
-	for (const auto &kv : key_values)
-	{
-		REQUIRE(*map.Delete(kv.first) == kv.second);
-	}
+  for (const auto &kv : key_values) {
+    REQUIRE(*map.Delete(kv.first) == kv.second);
+  }
 
-	REQUIRE(map.size() == 0);
+  REQUIRE(map.size() == 0);
 
-	indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 template <typename MapType>
-static void
-insert_worker(MapType &map, gsl::span<int64_t> vals)
-{
-	indexes::utils::ThreadLocal::RegisterThread();
+static void insert_worker(MapType &map, gsl::span<int64_t> vals) {
+  indexes::utils::ThreadLocal::RegisterThread();
 
-	for (auto val : vals)
-	{
-		map.Insert(val, val);
-	}
+  for (auto val : vals) {
+    map.Insert(val, val);
+  }
 
-	indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-enum class OpType
-{
-	INSERT,
-	DELETE,
-	DELETE_AND_INSERT
-};
+enum class OpType { INSERT, DELETE, DELETE_AND_INSERT };
 
 template <typename MapType>
-static void
-delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op)
-{
-	indexes::utils::ThreadLocal::RegisterThread();
+static void delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op) {
+  indexes::utils::ThreadLocal::RegisterThread();
 
-	for (auto val : vals)
-	{
-		switch (op)
-		{
-			case OpType::DELETE:
-				map.Delete(val);
-				break;
+  for (auto val : vals) {
+    switch (op) {
+    case OpType::DELETE:
+      map.Delete(val);
+      break;
 
-			case OpType::DELETE_AND_INSERT:
-				map.Delete(val);
-				map.Insert(val, val);
-				break;
+    case OpType::DELETE_AND_INSERT:
+      map.Delete(val);
+      map.Insert(val, val);
+      break;
 
-			case OpType::INSERT:
-				break;
-		}
-	}
+    case OpType::INSERT:
+      break;
+    }
+  }
 
-	indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadLocal::UnregisterThread();
 }
 
 template <typename MapType>
-void
-ConcurrentMapTest(ConcurrentMapTestWorkload workload)
-{
-	MapType map;
-	constexpr int PER_THREAD_OP_COUNT = 256 * 1024;
-	constexpr int NUM_THREADS         = 4;
-	std::vector<int64_t> vals = generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, workload);
+void ConcurrentMapTest(ConcurrentMapTestWorkload workload) {
+  MapType map;
+  constexpr int PER_THREAD_OP_COUNT = 256 * 1024;
+  constexpr int NUM_THREADS = 4;
+  std::vector<int64_t> vals =
+      generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, workload);
 
-	indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadLocal::RegisterThread();
 
-	auto run_test = [&](OpType op) {
-		std::vector<std::thread> workers;
-		int startval = 0;
-		int quantum  = vals.size() / NUM_THREADS;
+  auto run_test = [&](OpType op) {
+    std::vector<std::thread> workers;
+    int startval = 0;
+    int quantum = vals.size() / NUM_THREADS;
 
-		for (int i = 0; i < NUM_THREADS; i++)
-		{
-			if (op == OpType::INSERT)
-			{
-				workers.emplace_back(insert_worker<MapType>,
-				                     std::ref(map),
-				                     gsl::span<int64_t>{ vals.data() + startval, quantum });
-			}
-			else
-			{
-				workers.emplace_back(delete_worker<MapType>,
-				                     std::ref(map),
-				                     gsl::span<int64_t>{ vals.data() + startval, quantum },
-				                     op);
-			}
+    for (int i = 0; i < NUM_THREADS; i++) {
+      if (op == OpType::INSERT) {
+        workers.emplace_back(
+            insert_worker<MapType>, std::ref(map),
+            gsl::span<int64_t>{vals.data() + startval, quantum});
+      } else {
+        workers.emplace_back(
+            delete_worker<MapType>, std::ref(map),
+            gsl::span<int64_t>{vals.data() + startval, quantum}, op);
+      }
 
-			startval += quantum;
-		}
+      startval += quantum;
+    }
 
-		for (auto &worker : workers)
-		{
-			worker.join();
-		}
-	};
+    for (auto &worker : workers) {
+      worker.join();
+    }
+  };
 
-	// Insert check
-	{
-		run_test(OpType::INSERT);
+  // Insert check
+  {
+    run_test(OpType::INSERT);
 
-		REQUIRE(map.size() == vals.size());
+    REQUIRE(map.size() == vals.size());
 
-		for (auto val : vals)
-		{
-			REQUIRE(*map.Search(val) == val);
-		}
-	}
+    for (auto val : vals) {
+      REQUIRE(*map.Search(val) == val);
+    }
+  }
 
-	// Delete And Insert check
-	{
-		run_test(OpType::DELETE_AND_INSERT);
+  // Delete And Insert check
+  {
+    run_test(OpType::DELETE_AND_INSERT);
 
-		for (auto val : vals)
-		{
-			REQUIRE(*map.Search(val) == val);
-		}
+    for (auto val : vals) {
+      REQUIRE(*map.Search(val) == val);
+    }
 
-		REQUIRE(map.size() == vals.size());
-	}
+    REQUIRE(map.size() == vals.size());
+  }
 
-	// Delete check
-	{
-		run_test(OpType::DELETE);
+  // Delete check
+  {
+    run_test(OpType::DELETE);
 
-		REQUIRE(map.size() == 0);
-	}
+    REQUIRE(map.size() == 0);
+  }
 
-	indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadLocal::UnregisterThread();
 }
