@@ -720,6 +720,7 @@ private:
     if (parent) {
       auto old = parent->update(replacement, node_t::get_ind(key, depth));
       ART_DEBUG_ASSERT(old == node);
+      ART_DEBUG_ONLY(old);
     } else {
       root = replacement;
     }
