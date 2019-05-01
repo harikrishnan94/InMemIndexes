@@ -15,7 +15,10 @@ set(SRC
     "${SRC_UTILS_PATH}/TraceLog.cpp")
 
 # Set benchmark source files.
-set(BENCH_SRC "${BENCH_SRC_PATH}/benchBtree.cpp" "${BENCH_SRC_PATH}/benchHashTable.cpp")
+set(BENCH_SRC
+    "${BENCH_SRC_PATH}/benchBtree.cpp"
+    "${BENCH_SRC_PATH}/benchHashTable.cpp"
+    "${BENCH_SRC_PATH}/benchART.cpp")
 set(RAND_INT_BENCH_SRC "${BENCH_SRC_PATH}/randIntBench.cpp")
 set(YCSB_SRC
     "${YCSB_SRC_PATH}/core/core_workload.cpp"

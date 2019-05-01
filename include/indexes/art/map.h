@@ -777,10 +777,16 @@ private:
   static constexpr bool INSERT = false;
   static constexpr bool UPSERT = true;
 
-  node_t *root = nullptr;
-  std::size_t m_size = 0;
+  node_t *root;
+  std::size_t m_size;
 
 public:
+  map() : root(nullptr), m_size(0) {}
+  map(const map &) = delete;
+  map(map &&other)
+      : root(std::exchange(other.root, nullptr)),
+        m_size(std::exchange(other.m_size, 0)) {}
+
   std::optional<value_type> Search(key_type key) const {
     int depth = 0;
     node_t *node = root;
