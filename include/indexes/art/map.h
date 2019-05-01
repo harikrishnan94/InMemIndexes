@@ -836,7 +836,7 @@ public:
   std::optional<value_type> Delete(key_type key) {
     auto &&old = erase(root, nullptr, key, 0);
 
-    if (!old) {
+    if (old) {
       m_size--;
     }
 
