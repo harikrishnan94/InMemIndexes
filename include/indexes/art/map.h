@@ -32,10 +32,10 @@ struct art_traits_debug : art_traits_default {
   static constexpr bool DEBUG = true;
 };
 
-template <typename Traits = art_traits_default> class map {
+template <typename Value, typename Traits = art_traits_default> class map {
 public:
   using key_type = std::uint64_t;
-  using value_type = std::uint64_t;
+  using value_type = Value;
 
 private:
   static constexpr int NUM_BITS = 8;

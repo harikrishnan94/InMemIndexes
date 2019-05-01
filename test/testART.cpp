@@ -10,7 +10,7 @@
 
 TEST_CASE("ARTBasic", "[art]") {
   indexes::utils::ThreadLocal::RegisterThread();
-  indexes::art::map<indexes::art::art_traits_debug> map;
+  indexes::art::map<int, indexes::art::art_traits_debug> map;
 
   int num_keys = 1000 * 1000;
 
@@ -49,5 +49,5 @@ TEST_CASE("ARTBasic", "[art]") {
 }
 
 TEST_CASE("ARTMixed", "[art]") {
-  MixedMapTest<indexes::art::map<indexes::art::art_traits_debug>>();
+  MixedMapTest<indexes::art::map<int, indexes::art::art_traits_debug>>();
 }
