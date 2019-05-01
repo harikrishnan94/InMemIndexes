@@ -11,9 +11,9 @@
 
 namespace indexes::utils {
 static constexpr int leading_zeroes(uint64_t val) {
-#if defined(__LINUX__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__APPLE__)
 #define leading_zeroes_impl(x) __builtin_clzl(x)
-#endif /* __LINUX__ */
+#endif /* __linux__ */
 
 #ifdef _WIN32
 #include <intrin.h>
@@ -26,9 +26,9 @@ static constexpr int leading_zeroes(uint64_t val) {
 }
 
 static constexpr int leading_zeroes(uint32_t val) {
-#if defined(__LINUX__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__APPLE__)
 #define leading_zeroes_impl(x) __builtin_clz(x)
-#endif /* __LINUX__ */
+#endif /* __linux__ */
 
 #ifdef _WIN32
 #include <intrin.h>

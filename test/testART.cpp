@@ -19,7 +19,7 @@ TEST_CASE("ARTBasic", "[art]") {
   std::seed_seq seed{r(), r(), r(), r(), r(), r(), r(), r()};
   std::mt19937 rnd(seed);
 
-  std::unordered_map<uint64_t, int> key_values;
+  std::unordered_map<uint64_t, uint64_t> key_values;
 
   for (int i = 0; i < num_keys; i++) {
     auto key = udist(rnd);

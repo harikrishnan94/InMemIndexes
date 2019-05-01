@@ -7,6 +7,7 @@
 #include "indexes/utils/Utils.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cinttypes>
 #include <deque>
 #include <optional>
