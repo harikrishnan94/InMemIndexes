@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <random>
 
 namespace utils {
