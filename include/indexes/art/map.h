@@ -63,7 +63,9 @@ private:
     }
 
     static constexpr key_type rshift(key_type k, int v) {
-      return v >= (sizeof(key_type) * __CHAR_BIT__) ? 0 : k >> v;
+      return static_cast<std::size_t>(v) >= (sizeof(key_type) * __CHAR_BIT__)
+                 ? 0
+                 : k >> v;
     }
 
     constexpr int longest_common_prefix_length(key_type otherkey) const {
