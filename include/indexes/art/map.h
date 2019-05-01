@@ -619,6 +619,8 @@ private:
           grand_parent->update(parent, node_t::get_ind(node->key, depth - 1));
         else
           root = parent;
+
+        old->free();
       }
     } else {
       if (root) {
