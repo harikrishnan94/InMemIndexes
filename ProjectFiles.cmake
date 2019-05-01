@@ -24,6 +24,7 @@ set(YCSB_SRC
 
 # Set project test source files.
 set(TEST_SRC
+    "${TEST_SRC_PATH}/testART.cpp"
     "${TEST_SRC_PATH}/testHashMap.cpp"
     "${TEST_SRC_PATH}/testConcurrentMapUtils.cpp"
     "${TEST_SRC_PATH}/testBtreeConcurrentMap.cpp"
