@@ -1,12 +1,15 @@
-// include/art/map.h
-// Adaptive Radix Tree implementation for Integer keys
+// include/art/concurrent_map.h
+// Concurrent Adaptive Radix Tree implementation for Integer keys
 
 #pragma once
 
 #include "common.h"
 
+#include "indexes/utils/Mutex.h"
+
 namespace indexes::art {
-template <typename Value, typename Traits = art_traits_default> class map {
+template <typename Value, typename Traits = art_traits_default>
+class concurrent_map {
 public:
   using key_type = std::uint64_t;
   using value_type = Value;
@@ -774,17 +777,22 @@ private:
   static constexpr bool INSERT = false;
   static constexpr bool UPSERT = true;
 
+  std::unique_ptr<utils::Mutex> mtx;
   node_t *root;
   std::size_t m_size;
 
+  using LockType = std::unique_lock<utils::Mutex>;
+
 public:
-  map() : root(nullptr), m_size(0) {}
-  map(const map &) = delete;
-  map(map &&other)
+  concurrent_map()
+      : mtx(std::make_unique<utils::Mutex>()), root(nullptr), m_size(0) {}
+  concurrent_map(const concurrent_map &) = delete;
+  concurrent_map(concurrent_map &&other)
       : root(std::exchange(other.root, nullptr)),
         m_size(std::exchange(other.m_size, 0)) {}
 
   std::optional<value_type> Search(key_type key) const {
+    LockType lock{*mtx};
     int depth = 0;
     node_t *node = root;
 
@@ -818,6 +826,7 @@ public:
   }
 
   bool Insert(key_type key, value_type value) {
+    LockType lock{*mtx};
     auto &&old = insert<UpdateOp::UOP_Insert>(key, value);
 
     if (!old) {
@@ -828,6 +837,7 @@ public:
   }
 
   std::optional<value_type> Upsert(key_type key, value_type value) {
+    LockType lock{*mtx};
     auto &&old = insert<UpdateOp::UOP_Upsert>(key, value);
 
     if (!old) {
@@ -838,10 +848,12 @@ public:
   }
 
   std::optional<value_type> Update(key_type key, value_type value) {
+    LockType lock{*mtx};
     return insert<UpdateOp::UOP_Update>(key, value);
   }
 
   std::optional<value_type> Delete(key_type key) {
+    LockType lock{*mtx};
     auto &&old = erase(root, nullptr, key, 0);
 
     if (old) {
@@ -851,9 +863,12 @@ public:
     return old;
   }
 
-  std::size_t size() const { return m_size; }
+  std::size_t size() const {
+    LockType lock{*mtx};
+    return m_size;
+  }
 
-  ~map() {
+  ~concurrent_map() {
     std::deque<node_t *> children;
 
     if (root) {
@@ -871,6 +886,10 @@ public:
 
     root = nullptr;
     m_size = 0;
+  }
+
+  void reserve(size_t) {
+    // No-op
   }
 
   ART_DUMP_METHODS

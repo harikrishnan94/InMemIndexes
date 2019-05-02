@@ -1,6 +1,8 @@
-#include "indexes/art/map.h"
+#include "indexes/art/concurrent_map.h"
+#include "sha512.h"
 #include "testConcurrentMapUtils.h"
 
+#include <absl/hash/hash.h>
 #include <catch.hpp>
 
 #include <limits>
@@ -8,9 +10,9 @@
 #include <string>
 #include <unordered_map>
 
-TEST_CASE("ARTBasic", "[art]") {
+TEST_CASE("ConcurrentARTBasic", "[art]") {
   indexes::utils::ThreadLocal::RegisterThread();
-  indexes::art::map<int, indexes::art::art_traits_debug> map;
+  indexes::art::concurrent_map<uint64_t, indexes::art::art_traits_debug> map;
 
   int num_keys = 1000 * 1000;
 
@@ -31,10 +33,6 @@ TEST_CASE("ARTBasic", "[art]") {
   REQUIRE(map.size() == key_values.size());
 
   for (const auto &kv : key_values) {
-    REQUIRE(*map.Search(kv.first) == kv.second);
-  }
-
-  for (const auto &kv : key_values) {
     REQUIRE(*map.Delete(kv.first) == kv.second);
     REQUIRE(map.Insert(kv.first, kv.second) == true);
   }
@@ -48,6 +46,17 @@ TEST_CASE("ARTBasic", "[art]") {
   indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-TEST_CASE("ARTMixed", "[art]") {
-  MixedMapTest<indexes::art::map<int, indexes::art::art_traits_debug>>();
+TEST_CASE("ConcurrentARTMixed", "[art]") {
+  MixedMapTest<
+      indexes::art::concurrent_map<int, indexes::art::art_traits_debug>>();
+}
+
+TEST_CASE("ConcurrentARTConcurrencyRandom", "[art]") {
+  ConcurrentMapTest<indexes::art::concurrent_map<int64_t>>(
+      ConcurrentMapTestWorkload::WL_RANDOM);
+}
+
+TEST_CASE("ConcurrentARTConcurrencyContented", "[art]") {
+  ConcurrentMapTest<indexes::art::concurrent_map<int64_t>>(
+      ConcurrentMapTestWorkload::WL_CONTENTED);
 }

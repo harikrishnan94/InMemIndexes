@@ -1,3 +1,4 @@
+#include "indexes/art/concurrent_map.h"
 #include "indexes/btree/concurrent_map.h"
 #include "indexes/hashtable/concurrent_map.h"
 #include "utils/uniform_generator.h"
@@ -29,9 +30,10 @@ struct LongCompare {
 using BtreeMap = indexes::btree::concurrent_map<u64, u64, LongCompare,
                                                 btree_big_page_traits>;
 using HashMap = indexes::hashtable::concurrent_map<u64, u64, absl::Hash<u64>>;
+using ArtMap = indexes::art::concurrent_map<u64>;
 
 struct BMArgs {
-  enum class MapType { BtreeMap, HashMap };
+  enum class MapType { BtreeMap, HashMap, ArtMap };
 
   MapType map;
   std::string dist;
@@ -191,8 +193,8 @@ static void worker(std::promise<uint64_t> result, std::string dist,
   }();
 
   std::random_device rd;
-  std::mt19937_64 gen{
-      rd()}; // Standard mersenne_twister_engine seeded with rd()
+  // Standard mersenne_twister_engine seeded with rd()
+  std::mt19937_64 gen{rd()};
   std::uniform_int_distribution<int> opdis(0, 99);
   uint64_t num_successful_ops = 0;
   constexpr int BATCH = 100;
@@ -322,6 +324,10 @@ static void do_benchmark(const BMArgs &args) {
   case BMArgs::MapType::BtreeMap:
     do_benchmark<BtreeMap>(args);
     break;
+
+  case BMArgs::MapType::ArtMap:
+    do_benchmark<ArtMap>(args);
+    break;
   }
 }
 
@@ -388,6 +394,10 @@ int main(int argc, char *argv[]) {
       args.map = BMArgs::MapType::HashMap;
     else if (maptype == "btree")
       args.map = BMArgs::MapType::BtreeMap;
+    else if (maptype == "art")
+      args.map = BMArgs::MapType::ArtMap;
+    else
+      throw std::string{"Unsupported MapType requested"};
 
     do_benchmark(args);
   } catch (const po::error &ex) {
