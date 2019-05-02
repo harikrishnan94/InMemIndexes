@@ -56,27 +56,33 @@ private:
           key(a_key) {}
 
     static constexpr int get_ind(key_type key, int depth) {
-      int rdepth = MAX_DEPTH - depth - 1;
-      key_type mask = ((key_type)MAX_CHILDREN - 1) << (rdepth * NUM_BITS);
-
-      return (key & mask) >> (rdepth * NUM_BITS);
-    }
-
-    static constexpr key_type rshift(key_type k, int v) {
-      return static_cast<std::size_t>(v) >= (sizeof(key_type) * __CHAR_BIT__)
-                 ? 0
-                 : k >> v;
+      return reinterpret_cast<const uint8_t *__restrict__>(&key)[depth];
     }
 
     constexpr int longest_common_prefix_length(key_type otherkey) const {
-      return utils::leading_zeroes(this->key ^ otherkey) / __CHAR_BIT__;
+      auto keyvec = reinterpret_cast<const uint8_t *__restrict__>(&key);
+      auto otherkeyvec =
+          reinterpret_cast<const uint8_t *__restrict__>(&otherkey);
+      int len = 0;
+
+      while (len < sizeof(key_type)) {
+        if (keyvec[len] != otherkeyvec[len]) {
+          break;
+        }
+
+        len++;
+      }
+
+      return len;
     }
 
     static constexpr key_type extract_common_prefix(key_type key, int lcpl) {
-      key_type mask =
-          ~rshift(std::numeric_limits<key_type>::max(), lcpl * __CHAR_BIT__);
+      key_type ret = 0;
+      auto keyvec = reinterpret_cast<const uint8_t *__restrict__>(&key);
+      auto retvec = reinterpret_cast<uint8_t *__restrict__>(&ret);
+      std::copy(keyvec, keyvec + lcpl, retvec);
 
-      return key & mask;
+      return ret;
     }
 
     constexpr bool is_leaf() const { return node_type == node_type_t::LEAF; }
@@ -775,15 +781,16 @@ private:
       }
     }
 
-    int lcpl = node->longest_common_prefix_length(key);
-    int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
+    if (node->keylen) {
+      int lcpl = node->longest_common_prefix_length(key);
+      int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
 
-    if (node->keylen &&
-        (common_prefix_len == 0 || common_prefix_len != node->keylen)) {
-      return {};
+      if (common_prefix_len != node->keylen) {
+        return {};
+      }
+
+      depth += node->keylen;
     }
-
-    depth += node->keylen;
 
     ART_DEBUG_ASSERT(depth < MAX_DEPTH);
 
@@ -824,15 +831,16 @@ public:
         break;
       }
 
-      int lcpl = node->longest_common_prefix_length(key);
-      int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
+      if (node->keylen) {
+        int lcpl = node->longest_common_prefix_length(key);
+        int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
 
-      if (node->keylen &&
-          (common_prefix_len == 0 || common_prefix_len != node->keylen)) {
-        break;
+        if (common_prefix_len != node->keylen) {
+          break;
+        }
+
+        depth += node->keylen;
       }
-
-      depth += node->keylen;
 
       ART_DEBUG_ASSERT(depth < MAX_DEPTH);
 
