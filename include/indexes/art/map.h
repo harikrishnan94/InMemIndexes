@@ -38,9 +38,10 @@ public:
   using value_type = Value;
 
 private:
+  static constexpr int KEYTYPE_SIZE = sizeof(key_type);
   static constexpr int NUM_BITS = 8;
   static constexpr int MAX_CHILDREN = 1 << NUM_BITS;
-  static constexpr int MAX_DEPTH = (sizeof(key_type) * __CHAR_BIT__) / NUM_BITS;
+  static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * __CHAR_BIT__) / NUM_BITS;
 
   enum class node_type_t : uint8_t { LEAF, NODE4, NODE16, NODE48, NODE256 };
 
@@ -65,7 +66,7 @@ private:
           reinterpret_cast<const uint8_t *__restrict__>(&otherkey);
       int len = 0;
 
-      while (len < sizeof(key_type)) {
+      while (len < KEYTYPE_SIZE) {
         if (keyvec[len] != otherkeyvec[len]) {
           break;
         }
@@ -667,7 +668,7 @@ private:
                     node_t *node, node_t *parent) {
     int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
     auto leaf =
-        new leaf_t(key, value, sizeof(key_type) - depth - common_prefix_len);
+        new leaf_t(key, value, KEYTYPE_SIZE - depth - common_prefix_len);
     key_type prefix = node_t::extract_common_prefix(key, lcpl);
     auto inner = new node4_t(prefix, common_prefix_len);
 
@@ -693,7 +694,7 @@ private:
         replace_node(key, value, depth, lcpl, node, parent);
       } else {
         add_to_parent(parent, grand_parent,
-                      new leaf_t(key, value, sizeof(key_type) - depth), depth);
+                      new leaf_t(key, value, KEYTYPE_SIZE - depth), depth);
       }
     }
   }
@@ -734,7 +735,7 @@ private:
 
     if constexpr (UOp != UpdateOp::UOP_Update) {
       add_to_parent(parent, grand_parent,
-                    new leaf_t(key, value, sizeof(key_type) - depth), depth);
+                    new leaf_t(key, value, KEYTYPE_SIZE - depth), depth);
     }
 
     return {};
