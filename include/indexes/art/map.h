@@ -465,12 +465,33 @@ private:
   struct node48_t : node_t {
     static constexpr int MAX_CHILDREN = 48;
     static constexpr int MAX_KEYS = 256;
+    static constexpr uint64_t ONE = 1;
 
     uint8_t keys[MAX_KEYS];
+    std::uint64_t freemap;
     node_t *children[MAX_CHILDREN];
 
+    inline void mark_used(int pos) {
+      freemap |= ONE << (MAX_CHILDREN - 1 - pos);
+    }
+
+    inline void mark_free(int pos) {
+      freemap &= ~(ONE << (MAX_CHILDREN - 1 - pos));
+    }
+
+    inline int get_free_pos() {
+      constexpr int UINT64_BITS = sizeof(uint64_t) * __CHAR_BIT__;
+      constexpr std::uint64_t MASK = static_cast<std::uint64_t>(-1)
+                                     << MAX_CHILDREN;
+      int ind = utils::leading_zeroes(~(freemap | MASK));
+
+      freemap |= ONE << (UINT64_BITS - 1 - ind);
+
+      return MAX_CHILDREN - (UINT64_BITS - ind);
+    }
+
     node48_t(key_type key, uint8_t keylen)
-        : node_t(node_type_t::NODE48, key, keylen) {
+        : node_t(node_type_t::NODE48, key, keylen), freemap(0) {
       std::fill(keys, keys + MAX_KEYS, 0);
       std::fill(children, children + MAX_CHILDREN, nullptr);
     }
@@ -481,6 +502,7 @@ private:
 
       for (int i = 0; i < this->num_children; i++) {
         keys[node->keys[i]] = i + 1;
+        mark_used(i);
       }
 
       ART_DEBUG_ASSERT(this->equals(node));
@@ -494,6 +516,7 @@ private:
         if (node->children[i]) {
           keys[i] = pos + 1;
           children[pos] = node->children[i];
+          mark_used(pos);
           pos++;
         }
       }
@@ -505,12 +528,9 @@ private:
       if (this->num_children == MAX_CHILDREN)
         return false;
 
-      int pos = 0;
+      int pos = get_free_pos();
 
-      while (children[pos]) {
-        pos++;
-        ART_DEBUG_ASSERT(pos < MAX_CHILDREN);
-      }
+      ART_DEBUG_ASSERT(pos < MAX_CHILDREN);
 
       keys[ind] = pos + 1;
       children[pos] = node;
@@ -532,8 +552,10 @@ private:
       ART_DEBUG_ASSERT(keys[ind] != 0);
       ART_DEBUG_ASSERT(children[keys[ind] - 1] != nullptr);
 
-      children[keys[ind] - 1] = nullptr;
+      int pos = keys[ind] - 1;
+      children[pos] = nullptr;
       keys[ind] = 0;
+      mark_free(pos);
       this->num_children--;
     }
 
