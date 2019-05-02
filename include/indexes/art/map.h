@@ -323,27 +323,17 @@ private:
 
     static void add(uint8_t *keys, node_t **children, int &num_children,
                     node_t *node, uint8_t ind) {
-      uint8_t pos;
-
-      for (pos = 0; pos < num_children; pos++) {
-        if (keys[pos] > ind)
-          break;
-      }
-
-      std::copy_backward(keys + pos, keys + num_children,
-                         keys + num_children + 1);
-      std::copy_backward(children + pos, children + num_children,
-                         children + num_children + 1);
-      keys[pos] = ind;
-      children[pos] = node;
+      keys[num_children] = ind;
+      children[num_children] = node;
       num_children++;
     }
 
     static node_t *find(const uint8_t *keys, node_t *const *children,
                         int num_children, uint8_t ind) {
-      for (uint8_t i = 0; i < num_children && keys[i] <= ind; i++) {
-        if (ind == keys[i])
+      for (uint8_t i = 0; i < num_children; i++) {
+        if (ind == keys[i]) {
           return children[i];
+        }
       }
 
       return nullptr;
@@ -353,9 +343,10 @@ private:
                        uint8_t ind) {
       uint8_t pos;
 
-      for (pos = 0; pos < num_children && keys[pos] <= ind; pos++) {
-        if (ind == keys[pos])
+      for (pos = 0; pos < num_children; pos++) {
+        if (ind == keys[pos]) {
           break;
+        }
       }
 
       ART_DEBUG_ASSERT(pos < num_children);
@@ -367,9 +358,10 @@ private:
 
     static node_t *update(uint8_t *keys, node_t **children, int num_children,
                           uint8_t ind, node_t *new_child) {
-      for (uint8_t i = 0; i < num_children && keys[i] <= ind; i++) {
-        if (ind == keys[i])
+      for (uint8_t i = 0; i < num_children; i++) {
+        if (ind == keys[i]) {
           return std::exchange(children[i], new_child);
+        }
       }
 
       return nullptr;
