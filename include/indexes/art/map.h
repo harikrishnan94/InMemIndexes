@@ -17,6 +17,8 @@ private:
   static constexpr int MAX_CHILDREN = 1 << NUM_BITS;
   static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * __CHAR_BIT__) / NUM_BITS;
 
+  using bytea = const uint8_t *_RESTRICT;
+
   enum class node_type_t : uint8_t { LEAF, NODE4, NODE16, NODE48, NODE256 };
 
   struct node_t {
@@ -31,13 +33,12 @@ private:
           key(a_key) {}
 
     static constexpr int get_ind(key_type key, int depth) {
-      return reinterpret_cast<const uint8_t *__restrict__>(&key)[depth];
+      return reinterpret_cast<bytea>(&key)[depth];
     }
 
     constexpr int longest_common_prefix_length(key_type otherkey) const {
-      auto keyvec = reinterpret_cast<const uint8_t *__restrict__>(&key);
-      auto otherkeyvec =
-          reinterpret_cast<const uint8_t *__restrict__>(&otherkey);
+      auto keyvec = reinterpret_cast<bytea>(&key);
+      auto otherkeyvec = reinterpret_cast<bytea>(&otherkey);
       int len = 0;
 
       while (len < KEYTYPE_SIZE) {
@@ -53,7 +54,7 @@ private:
 
     static constexpr key_type extract_common_prefix(key_type key, int lcpl) {
       key_type ret = 0;
-      auto keyvec = reinterpret_cast<const uint8_t *__restrict__>(&key);
+      auto keyvec = reinterpret_cast<bytea>(&key);
       auto retvec = reinterpret_cast<uint8_t *__restrict__>(&ret);
       std::copy(keyvec, keyvec + lcpl, retvec);
 

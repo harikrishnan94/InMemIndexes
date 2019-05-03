@@ -20,27 +20,31 @@ private:
   static constexpr int MAX_CHILDREN = 1 << NUM_BITS;
   static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * __CHAR_BIT__) / NUM_BITS;
 
+  using bytea = const uint8_t *_RESTRICT;
+
   enum class node_type_t : uint8_t { LEAF, NODE4, NODE16, NODE48, NODE256 };
+
+  struct node_size_state_t {
+    uint16_t num_children : 10;
+    uint16_t num_deleted : 6;
+  };
 
   struct node_t {
     const node_type_t node_type;
     uint8_t keylen;
-    int num_children;
-
+    node_size_state_t size_state;
     const key_type key;
 
     node_t(node_type_t a_node_type, key_type a_key, uint8_t a_keylen)
-        : node_type(a_node_type), keylen(a_keylen), num_children(0),
-          key(a_key) {}
+        : node_type(a_node_type), keylen(a_keylen), size_state{}, key(a_key) {}
 
     static constexpr int get_ind(key_type key, int depth) {
-      return reinterpret_cast<const uint8_t *__restrict__>(&key)[depth];
+      return reinterpret_cast<bytea>(&key)[depth];
     }
 
     constexpr int longest_common_prefix_length(key_type otherkey) const {
-      auto keyvec = reinterpret_cast<const uint8_t *__restrict__>(&key);
-      auto otherkeyvec =
-          reinterpret_cast<const uint8_t *__restrict__>(&otherkey);
+      auto keyvec = reinterpret_cast<bytea>(&key);
+      auto otherkeyvec = reinterpret_cast<bytea>(&otherkey);
       int len = 0;
 
       while (len < KEYTYPE_SIZE) {
@@ -56,25 +60,32 @@ private:
 
     static constexpr key_type extract_common_prefix(key_type key, int lcpl) {
       key_type ret = 0;
-      auto keyvec = reinterpret_cast<const uint8_t *__restrict__>(&key);
-      auto retvec = reinterpret_cast<uint8_t *__restrict__>(&ret);
+      auto keyvec = reinterpret_cast<bytea>(&key);
+      auto retvec = reinterpret_cast<uint8_t * _RESTRICT>(&ret);
       std::copy(keyvec, keyvec + lcpl, retvec);
 
       return ret;
+    }
+
+    constexpr int size() const {
+      return size_state.num_children - size_state.num_deleted;
     }
 
     constexpr bool is_leaf() const { return node_type == node_type_t::LEAF; }
 
     bool equals(const node_t *other) const {
       for (int i = 0; i < MAX_CHILDREN; i++) {
-        if (find(i) != other->find(i))
+        if (find(i) != other->find(i)) {
           return false;
+        }
       }
 
       return true;
     }
 
     node_t *find(uint8_t ind) const {
+      ART_DEBUG_ASSERT(this->size() != 0);
+
       switch (node_type) {
       case node_type_t::NODE4:
         return static_cast<const node4_t *>(this)->find(ind);
@@ -117,6 +128,8 @@ private:
     }
 
     node_t *update(node_t *child, uint8_t ind) {
+      ART_DEBUG_ASSERT(this->size() != 0);
+
       switch (node_type) {
       case node_type_t::NODE4:
         return static_cast<node4_t *>(this)->update(child, ind);
@@ -138,6 +151,8 @@ private:
     }
 
     void remove(uint8_t ind) {
+      ART_DEBUG_ASSERT(this->size() != 0);
+
       switch (node_type) {
       case node_type_t::NODE4:
         static_cast<node4_t *>(this)->remove(ind);
@@ -161,12 +176,22 @@ private:
     }
 
     node_t *expand() const {
+      ART_DEBUG_ASSERT(this->size() != 0);
+
       switch (node_type) {
       case node_type_t::NODE4:
-        return new node16_t(static_cast<const node4_t *>(this));
+        if (this->size_state.num_deleted) {
+          return new node4_t(static_cast<const node4_t *>(this));
+        } else {
+          return new node16_t(static_cast<const node4_t *>(this));
+        }
 
       case node_type_t::NODE16:
-        return new node48_t(static_cast<const node16_t *>(this));
+        if (this->size_state.num_deleted) {
+          return new node16_t(static_cast<const node16_t *>(this));
+        } else {
+          return new node48_t(static_cast<const node16_t *>(this));
+        }
 
       case node_type_t::NODE48:
         return new node256_t(static_cast<const node48_t *>(this));
@@ -181,6 +206,8 @@ private:
     }
 
     bool is_underfull() const {
+      ART_DEBUG_ASSERT(this->size() != 0);
+
       switch (node_type) {
       case node_type_t::NODE4:
         return static_cast<const node4_t *>(this)->is_underfull();
@@ -202,6 +229,8 @@ private:
     }
 
     node_t *shrink() const {
+      ART_DEBUG_ASSERT(this->size() != 0);
+
       switch (node_type) {
       case node_type_t::NODE4:
         return static_cast<const node4_t *>(this)->shrink();
@@ -223,6 +252,8 @@ private:
     }
 
     void free() {
+      ART_DEBUG_ASSERT(this->is_leaf() || this->size() != 0);
+
       switch (node_type) {
       case node_type_t::NODE4:
         delete static_cast<node4_t *>(this);
@@ -285,68 +316,78 @@ private:
 
     node4_t(key_type key, uint8_t keylen)
         : node_t(node_type_t::NODE4, key, keylen) {
-      std::fill(keys, keys + MAX_CHILDREN, 0);
       std::fill(children, children + MAX_CHILDREN, nullptr);
     }
 
     node4_t(const node16_t *node) : node4_t(node->key, node->keylen) {
-      ART_DEBUG_ASSERT(node->num_children <= MAX_CHILDREN);
-      this->num_children = node->num_children;
-      std::copy(node->keys, node->keys + this->num_children, keys);
-      std::copy(node->children, node->children + this->num_children, children);
-
-      ART_DEBUG_ASSERT(this->equals(node));
+      copy(this, node);
     }
 
-    static void add(uint8_t *keys, node_t **children, int &num_children,
-                    node_t *node, uint8_t ind) {
-      keys[num_children] = ind;
-      children[num_children] = node;
-      num_children++;
+    node4_t(const node4_t *node) : node4_t(node->key, node->keylen) {
+      copy(this, node);
+    }
+
+    template <typename NodeTypeDst, typename NodeTypeSrc>
+    static void copy(NodeTypeDst *dst, const NodeTypeSrc *src) {
+      ART_DEBUG_ASSERT(src->size() <= NodeTypeDst::MAX_CHILDREN);
+
+      for (int i = 0; i < src->size_state.num_children; i++) {
+        if (src->children[i]) {
+          dst->add(src->children[i], src->keys[i]);
+        }
+      }
+
+      ART_DEBUG_ASSERT(dst->equals(src));
+    }
+
+    static void add(uint8_t *keys, node_t **children,
+                    node_size_state_t &size_state, node_t *node, uint8_t ind) {
+      keys[size_state.num_children] = ind;
+      children[size_state.num_children] = node;
+      size_state.num_children++;
+    }
+
+    static uint8_t find_pos(const uint8_t *keys, node_t *const *children,
+                            uint8_t num_children, uint8_t ind) {
+      for (uint8_t pos = 0; pos < num_children; pos++) {
+        if (ind == keys[pos] && children[pos]) {
+          return pos;
+        }
+      }
+
+      return num_children;
     }
 
     static node_t *find(const uint8_t *keys, node_t *const *children,
-                        int num_children, uint8_t ind) {
-      for (uint8_t i = 0; i < num_children; i++) {
-        if (ind == keys[i]) {
-          return children[i];
-        }
-      }
+                        uint8_t num_children, uint8_t ind) {
+      uint8_t pos = find_pos(keys, children, num_children, ind);
 
-      return nullptr;
+      return pos < num_children ? children[pos] : nullptr;
     }
 
-    static void remove(uint8_t *keys, node_t **children, int &num_children,
-                       uint8_t ind) {
-      uint8_t pos;
+    static void remove(uint8_t *keys, node_t **children,
+                       node_size_state_t &size_state, uint8_t ind) {
+      uint8_t pos = find_pos(keys, children, size_state.num_children, ind);
 
-      for (pos = 0; pos < num_children; pos++) {
-        if (ind == keys[pos]) {
-          break;
-        }
-      }
+      ART_DEBUG_ASSERT(pos < size_state.num_children);
+
+      children[pos] = nullptr;
+      size_state.num_deleted++;
+    }
+
+    static node_t *update(uint8_t *keys, node_t **children,
+                          uint8_t num_children, uint8_t ind,
+                          node_t *new_child) {
+      uint8_t pos = find_pos(keys, children, num_children, ind);
 
       ART_DEBUG_ASSERT(pos < num_children);
 
-      std::copy(keys + pos + 1, keys + num_children, keys + pos);
-      std::copy(children + pos + 1, children + num_children, children + pos);
-      num_children--;
-    }
-
-    static node_t *update(uint8_t *keys, node_t **children, int num_children,
-                          uint8_t ind, node_t *new_child) {
-      for (uint8_t i = 0; i < num_children; i++) {
-        if (ind == keys[i]) {
-          return std::exchange(children[i], new_child);
-        }
-      }
-
-      return nullptr;
+      return std::exchange(children[pos], new_child);
     }
 
     bool add(node_t *node, uint8_t ind) {
-      if (this->num_children != MAX_CHILDREN) {
-        add(keys, children, this->num_children, node, ind);
+      if (this->size_state.num_children != MAX_CHILDREN) {
+        add(keys, children, this->size_state, node, ind);
         return true;
       }
 
@@ -354,24 +395,31 @@ private:
     }
 
     node_t *find(uint8_t ind) const {
-      return find(keys, children, this->num_children, ind);
+      return find(keys, children, this->size_state.num_children, ind);
     }
 
     node_t *update(node_t *new_child, uint8_t ind) {
-      return update(keys, children, this->num_children, ind, new_child);
+      return update(keys, children, this->size_state.num_children, ind,
+                    new_child);
     }
 
-    void remove(uint8_t ind) {
-      remove(keys, children, this->num_children, ind);
-    }
+    void remove(uint8_t ind) { remove(keys, children, this->size_state, ind); }
 
-    bool is_underfull() const { return this->num_children <= 1; }
+    bool is_underfull() const { return this->size() <= 1; }
 
     node_t *shrink() const {
-      node_t *child = this->children[0];
-      child->keylen += this->keylen;
+      ART_DEBUG_ASSERT(this->size() == 1);
 
-      return child;
+      for (int i = 0; i < this->size_state.num_children; i++) {
+        node_t *child = children[i];
+
+        if (child) {
+          child->keylen += this->keylen;
+          return child;
+        }
+      }
+
+      return nullptr;
     }
   };
 
@@ -384,17 +432,15 @@ private:
 
     node16_t(key_type key, uint8_t keylen)
         : node_t(node_type_t::NODE16, key, keylen) {
-      std::fill(keys, keys + MAX_CHILDREN, 0);
       std::fill(children, children + MAX_CHILDREN, nullptr);
     }
 
     node16_t(const node4_t *node) : node16_t(node->key, node->keylen) {
-      ART_DEBUG_ASSERT(node->num_children <= MAX_CHILDREN);
-      this->num_children = node->num_children;
-      std::copy(node->keys, node->keys + this->num_children, keys);
-      std::copy(node->children, node->children + this->num_children, children);
+      node4_t::copy(this, node);
+    }
 
-      ART_DEBUG_ASSERT(this->equals(node));
+    node16_t(const node16_t *node) : node16_t(node->key, node->keylen) {
+      node4_t::copy(this, node);
     }
 
     node16_t(const node48_t *node) : node16_t(node->key, node->keylen) {
@@ -406,14 +452,14 @@ private:
         }
       }
 
-      this->num_children = node->num_children;
+      this->size_state.num_children = node->size_state.num_children;
 
       ART_DEBUG_ASSERT(this->equals(node));
     }
 
     bool add(node_t *node, uint8_t ind) {
-      if (this->num_children != MAX_CHILDREN) {
-        node4_t::add(keys, children, this->num_children, node, ind);
+      if (this->size_state.num_children != MAX_CHILDREN) {
+        node4_t::add(keys, children, this->size_state, node, ind);
         return true;
       }
 
@@ -421,21 +467,19 @@ private:
     }
 
     node_t *find(uint8_t ind) const {
-      return node4_t::find(keys, children, this->num_children, ind);
+      return node4_t::find(keys, children, this->size_state.num_children, ind);
     }
 
     node_t *update(node_t *new_child, uint8_t ind) {
-      return node4_t::update(keys, children, this->num_children, ind,
+      return node4_t::update(keys, children, this->size_state.num_children, ind,
                              new_child);
     }
 
     void remove(uint8_t ind) {
-      node4_t::remove(keys, children, this->num_children, ind);
+      node4_t::remove(keys, children, this->size_state, ind);
     }
 
-    bool is_underfull() const {
-      return this->num_children == node4_t::MAX_CHILDREN;
-    }
+    bool is_underfull() const { return this->size() <= node4_t::MAX_CHILDREN; }
   };
 
   struct node48_t : node_t {
@@ -473,20 +517,12 @@ private:
     }
 
     node48_t(const node16_t *node) : node48_t(node->key, node->keylen) {
-      this->num_children = node->num_children;
-      std::copy(node->children, node->children + this->num_children, children);
-
-      for (int i = 0; i < this->num_children; i++) {
-        keys[node->keys[i]] = i + 1;
-        mark_used(i);
-      }
-
-      ART_DEBUG_ASSERT(this->equals(node));
+      node4_t::copy(this, node);
     }
 
     node48_t(const node256_t *node) : node48_t(node->key, node->keylen) {
-      ART_DEBUG_ASSERT(node->num_children <= MAX_CHILDREN);
-      this->num_children = node->num_children;
+      ART_DEBUG_ASSERT(node->size_state.num_children <= MAX_CHILDREN);
+      this->size_state.num_children = node->size_state.num_children;
 
       for (int i = 0, pos = 0; i < node256_t::MAX_CHILDREN; i++) {
         if (node->children[i]) {
@@ -501,8 +537,9 @@ private:
     }
 
     bool add(node_t *node, uint8_t ind) {
-      if (this->num_children == MAX_CHILDREN)
+      if (this->size_state.num_children == MAX_CHILDREN) {
         return false;
+      }
 
       int pos = get_free_pos();
 
@@ -510,7 +547,7 @@ private:
 
       keys[ind] = pos + 1;
       children[pos] = node;
-      this->num_children++;
+      this->size_state.num_children++;
 
       return true;
     }
@@ -532,12 +569,10 @@ private:
       children[pos] = nullptr;
       keys[ind] = 0;
       mark_free(pos);
-      this->num_children--;
+      this->size_state.num_children--;
     }
 
-    bool is_underfull() const {
-      return this->num_children == node16_t::MAX_CHILDREN;
-    }
+    bool is_underfull() const { return this->size() <= node16_t::MAX_CHILDREN; }
   };
 
   struct node256_t : node_t {
@@ -552,11 +587,12 @@ private:
     }
 
     node256_t(const node48_t *node) : node256_t(node->key, node->keylen) {
-      this->num_children = node->num_children;
+      this->size_state.num_children = node->size_state.num_children;
 
       for (int i = 0; i < node48_t::MAX_KEYS; i++) {
-        if (node->keys[i])
+        if (node->keys[i]) {
           children[i] = node->children[node->keys[i] - 1];
+        }
       }
 
       ART_DEBUG_ASSERT(this->equals(node));
@@ -564,10 +600,10 @@ private:
 
     bool add(node_t *node, uint8_t ind) {
       ART_DEBUG_ASSERT(children[ind] == nullptr);
-      ART_DEBUG_ASSERT(this->num_children < MAX_CHILDREN);
+      ART_DEBUG_ASSERT(this->size_state.num_children < MAX_CHILDREN);
 
       children[ind] = node;
-      this->num_children++;
+      this->size_state.num_children++;
       return true;
     }
 
@@ -579,12 +615,10 @@ private:
 
     void remove(uint8_t ind) {
       children[ind] = nullptr;
-      this->num_children--;
+      this->size_state.num_children--;
     }
 
-    bool is_underfull() const {
-      return this->num_children == node48_t::MAX_CHILDREN;
-    }
+    bool is_underfull() const { return this->size() <= node48_t::MAX_CHILDREN; }
   };
 
   enum class UpdateOp {
@@ -596,10 +630,11 @@ private:
   template <UpdateOp UOp>
   static std::optional<value_type> update_leaf(node_t *node, value_type value) {
     auto leaf = static_cast<leaf_t *>(node);
-    if constexpr (UOp != UpdateOp::UOP_Insert)
+    if constexpr (UOp != UpdateOp::UOP_Insert) {
       return std::exchange(leaf->value, value);
-    else
+    } else {
       return leaf->value;
+    }
   }
 
   void add_to_parent(node_t *parent, node_t *grand_parent, node_t *node,
@@ -613,10 +648,11 @@ private:
 
         parent->add(node, ind);
 
-        if (grand_parent)
+        if (grand_parent) {
           grand_parent->update(parent, node_t::get_ind(node->key, depth - 1));
-        else
+        } else {
           root = parent;
+        }
 
         old->free();
       }
@@ -728,8 +764,9 @@ private:
 
   std::optional<value_type> erase(node_t *node, node_t *parent, key_type key,
                                   int depth) {
-    if (!node)
+    if (!node) {
       return {};
+    }
 
     if (node->is_leaf()) {
       auto leaf = static_cast<leaf_t *>(node);
