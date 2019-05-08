@@ -346,7 +346,7 @@ private:
       bool present =
           pos < num_values && key_equal(get_key_value(pos)->first, key);
 
-      return std::make_pair(pos, present);
+      return {pos, present};
     }
 
     INNER_ONLY
@@ -1676,9 +1676,7 @@ public:
   }
 
   std::optional<Value> Search(const Key &key) {
-    std::optional<Value> val{};
-
-    do {
+    while (true) {
       EpochGuard eg(this);
       NodeSnapshot leaf_snapshot = get_leaf_containing(key);
 
@@ -1686,20 +1684,20 @@ public:
         leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
         auto [pos, key_present] = leaf->lower_bound(key);
 
-        if (key_present)
-          val = leaf->get_key_value(pos)->second;
-        else
-          val = std::nullopt;
+        std::optional<Value> val =
+            key_present ? std::optional<Value>{leaf->get_key_value(pos)->second}
+                        : std::nullopt;
 
         if (is_snapshot_stale(leaf_snapshot)) {
           BTREE_UPDATE_STAT(retry, ++);
           continue;
         }
+
+        return val;
+      } else {
+        return {};
       }
-
-    } while (false);
-
-    return val;
+    };
   }
 
   std::optional<Value> Delete(const Key &key) {
