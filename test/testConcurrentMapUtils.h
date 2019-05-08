@@ -1,6 +1,6 @@
 #include "indexes/utils/ThreadLocal.h"
 
-#include <catch.hpp>
+#include <doctest/doctest.h>
 #include <gsl/span>
 
 #include <inttypes.h>
@@ -99,11 +99,23 @@ template <typename MapType> void MixedMapTest() {
 }
 
 template <typename MapType>
+static void lookup_worker(MapType &map, gsl::span<int64_t> vals) {
+  indexes::utils::ThreadLocal::RegisterThread();
+
+  for (auto val : vals) {
+    map.Search(val);
+  }
+
+  indexes::utils::ThreadLocal::UnregisterThread();
+}
+
+template <typename MapType>
 static void insert_worker(MapType &map, gsl::span<int64_t> vals) {
   indexes::utils::ThreadLocal::RegisterThread();
 
   for (auto val : vals) {
-    map.Insert(val, val);
+    REQUIRE(map.Insert(val, val) == true);
+    REQUIRE(*map.Search(val) == val);
   }
 
   indexes::utils::ThreadLocal::UnregisterThread();
@@ -118,12 +130,13 @@ static void delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op) {
   for (auto val : vals) {
     switch (op) {
     case OpType::DELETE:
-      map.Delete(val);
+      REQUIRE(*map.Delete(val) == val);
+      REQUIRE(map.Search(val).has_value() == false);
       break;
 
     case OpType::DELETE_AND_INSERT:
-      map.Delete(val);
-      map.Insert(val, val);
+      REQUIRE(*map.Delete(val) == val);
+      REQUIRE(map.Insert(val, val) == true);
       break;
 
     case OpType::INSERT:
@@ -138,7 +151,7 @@ template <typename MapType>
 void ConcurrentMapTest(ConcurrentMapTestWorkload workload) {
   MapType map;
   constexpr int PER_THREAD_OP_COUNT = 256 * 1024;
-  constexpr int NUM_THREADS = 4;
+  const int NUM_THREADS = std::thread::hardware_concurrency();
   std::vector<int64_t> vals =
       generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, workload);
 
@@ -162,6 +175,9 @@ void ConcurrentMapTest(ConcurrentMapTestWorkload workload) {
 
       startval += quantum;
     }
+
+    workers.emplace_back(lookup_worker<MapType>, std::ref(map),
+                         gsl::span<int64_t>{vals});
 
     for (auto &worker : workers) {
       worker.join();
