@@ -1163,7 +1163,7 @@ public:
 
   concurrent_map(concurrent_map &&other)
       : root(other.root.exchange(nullptr)),
-        num_values(other.num_values.exchange(nullptr)) {}
+        num_values(std::exchange(other.num_values, nullptr)) {}
 
   std::optional<value_type> Search(key_type key) const {
     EpochGuard eg{this};
