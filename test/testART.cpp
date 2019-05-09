@@ -1,14 +1,16 @@
 #include "indexes/art/map.h"
 #include "testConcurrentMapUtils.h"
 
-#include <catch.hpp>
+#include <doctest/doctest.h>
 
 #include <limits>
 #include <random>
 #include <string>
 #include <unordered_map>
 
-TEST_CASE("ARTBasic", "[art]") {
+TEST_SUITE_BEGIN("art");
+
+TEST_CASE("ARTBasic") {
   indexes::utils::ThreadLocal::RegisterThread();
   indexes::art::map<int, indexes::art::art_traits_debug> map;
 
@@ -48,6 +50,8 @@ TEST_CASE("ARTBasic", "[art]") {
   indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-TEST_CASE("ARTMixed", "[art]") {
+TEST_CASE("ARTMixed") {
   MixedMapTest<indexes::art::map<int, indexes::art::art_traits_debug>>();
 }
+
+TEST_SUITE_END();

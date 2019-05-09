@@ -4,8 +4,12 @@
 #pragma once
 
 #include "common.h"
-
+#include "indexes/utils/EpochManager.h"
 #include "indexes/utils/Mutex.h"
+#include "indexes/utils/ThreadLocal.h"
+
+#include <atomic>
+#include <memory>
 
 namespace indexes::art {
 template <typename Value, typename Traits = art_traits_default>
@@ -20,26 +24,67 @@ private:
   static constexpr int MAX_CHILDREN = 1 << NUM_BITS;
   static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * __CHAR_BIT__) / NUM_BITS;
 
-  using bytea = const uint8_t *_RESTRICT;
+  using bytea = const std::uint8_t *_RESTRICT;
+  using version_t = std::uint64_t;
 
-  enum class node_type_t : uint8_t { LEAF, NODE4, NODE16, NODE48, NODE256 };
+  template <typename T> static inline T load_aq(const std::atomic<T> &val) {
+    return val.load(std::memory_order_acquire);
+  }
 
-  struct node_size_state_t {
-    uint16_t num_children : 10;
-    uint16_t num_deleted : 6;
+  template <typename T, typename U>
+  static inline void store_rs(std::atomic<T> &val, U &&newval) {
+    val.store(std::forward<T>(newval), std::memory_order_release);
+  }
+
+  template <typename T>
+  static inline void store_rs(std::atomic<T> &val, const T &newval) {
+    val.store(newval, std::memory_order_release);
+  }
+
+  template <typename T, typename U>
+  static inline T xchg_rs(std::atomic<T> &val, U &&newval) {
+    auto old = val.load(std::memory_order_relaxed);
+
+    store_rs(val, newval);
+    return old;
+  }
+
+  template <typename T, typename SizeType>
+  static inline void fill_zero_rx(std::atomic<T> *vals, SizeType len) {
+    T val = {};
+
+    for (SizeType i = 0; i < len; i++) {
+      vals[i].store(val, std::memory_order_relaxed);
+    }
+  }
+
+  enum class node_type_t : std::uint8_t {
+    LEAF,
+    NODE4,
+    NODE16,
+    NODE48,
+    NODE256
   };
 
   struct node_t {
     const node_type_t node_type;
-    uint8_t keylen;
-    node_size_state_t size_state;
+    const std::int8_t level;
+    std::atomic<std::int16_t> num_children;
+    std::atomic<std::int16_t> num_deleted;
+
     const key_type key;
+    std::atomic<version_t> version;
+    utils::Mutex m;
 
-    node_t(node_type_t a_node_type, key_type a_key, uint8_t a_keylen)
-        : node_type(a_node_type), keylen(a_keylen), size_state{}, key(a_key) {}
+    static constexpr version_t DEAD_VERSION =
+        std::numeric_limits<version_t>::max();
 
-    static constexpr int get_ind(key_type key, int depth) {
-      return reinterpret_cast<bytea>(&key)[depth];
+    node_t(node_type_t a_node_type, key_type a_key, std::int8_t a_level)
+        : node_type(a_node_type), level(a_level), num_children(0),
+          num_deleted(0), key(a_key), version(0), m() {}
+
+    constexpr int get_ind(key_type key) const {
+      return reinterpret_cast<bytea>(&key)[level];
     }
 
     constexpr int longest_common_prefix_length(key_type otherkey) const {
@@ -61,17 +106,22 @@ private:
     static constexpr key_type extract_common_prefix(key_type key, int lcpl) {
       key_type ret = 0;
       auto keyvec = reinterpret_cast<bytea>(&key);
-      auto retvec = reinterpret_cast<uint8_t * _RESTRICT>(&ret);
+      auto retvec = reinterpret_cast<std::uint8_t * _RESTRICT>(&ret);
       std::copy(keyvec, keyvec + lcpl, retvec);
 
       return ret;
     }
 
-    constexpr int size() const {
-      return size_state.num_children - size_state.num_deleted;
+    constexpr int size() const { return num_children - num_deleted; }
+    constexpr bool is_leaf() const { return node_type == node_type_t::LEAF; }
+
+    constexpr void mark_as_deleted() {
+      concurrent_map::store_rs(version, DEAD_VERSION);
     }
 
-    constexpr bool is_leaf() const { return node_type == node_type_t::LEAF; }
+    constexpr bool is_deleted() const {
+      return load_aq(version) == DEAD_VERSION;
+    }
 
     bool equals(const node_t *other) const {
       for (int i = 0; i < MAX_CHILDREN; i++) {
@@ -83,7 +133,7 @@ private:
       return true;
     }
 
-    node_t *find(uint8_t ind) const {
+    node_t *find(std::uint8_t ind) const {
       ART_DEBUG_ASSERT(this->size() != 0);
 
       switch (node_type) {
@@ -106,52 +156,81 @@ private:
       return nullptr;
     }
 
-    bool add(node_t *child, uint8_t ind) {
+    bool add(node_t *child, std::uint8_t ind) {
+      bool ret = false;
+
+      ART_DEBUG_ASSERT(m.is_locked());
+
       switch (node_type) {
       case node_type_t::NODE4:
-        return static_cast<node4_t *>(this)->add(child, ind);
+        ret = static_cast<node4_t *>(this)->add(child, ind);
+        break;
 
       case node_type_t::NODE16:
-        return static_cast<node16_t *>(this)->add(child, ind);
+        ret = static_cast<node16_t *>(this)->add(child, ind);
+        break;
 
       case node_type_t::NODE48:
-        return static_cast<node48_t *>(this)->add(child, ind);
+        ret = static_cast<node48_t *>(this)->add(child, ind);
+        break;
 
       case node_type_t::NODE256:
-        return static_cast<node256_t *>(this)->add(child, ind);
+        ret = static_cast<node256_t *>(this)->add(child, ind);
+        break;
 
       case node_type_t::LEAF:
         ART_DEBUG_ASSERT("add called for leaf");
       }
 
-      return false;
+      if (ret) {
+        concurrent_map::store_rs(version, load_aq(version) + 1);
+      }
+
+      return ret;
     }
 
-    node_t *update(node_t *child, uint8_t ind) {
+    node_t *find(int key) const { return find(static_cast<std::uint8_t>(key)); }
+    node_t *find(key_type key) const { return find(get_ind(key)); }
+    bool add(node_t *child) { return add(child, get_ind(child->key)); }
+
+    node_t *update(node_t *child) {
       ART_DEBUG_ASSERT(this->size() != 0);
+      ART_DEBUG_ASSERT(m.is_locked());
+
+      std::uint8_t ind = get_ind(child->key);
+      node_t *ret = nullptr;
 
       switch (node_type) {
       case node_type_t::NODE4:
-        return static_cast<node4_t *>(this)->update(child, ind);
+        ret = static_cast<node4_t *>(this)->update(child, ind);
+        break;
 
       case node_type_t::NODE16:
-        return static_cast<node16_t *>(this)->update(child, ind);
+        ret = static_cast<node16_t *>(this)->update(child, ind);
+        break;
 
       case node_type_t::NODE48:
-        return static_cast<node48_t *>(this)->update(child, ind);
+        ret = static_cast<node48_t *>(this)->update(child, ind);
+        break;
 
       case node_type_t::NODE256:
-        return static_cast<node256_t *>(this)->update(child, ind);
+        ret = static_cast<node256_t *>(this)->update(child, ind);
+        break;
 
       case node_type_t::LEAF:
         ART_DEBUG_ASSERT("add called for leaf");
       }
 
-      return nullptr;
+      concurrent_map::store_rs(version, load_aq(version) + 1);
+
+      return ret;
     }
 
-    void remove(uint8_t ind) {
+    void remove(key_type key) {
       ART_DEBUG_ASSERT(this->size() != 0);
+      ART_DEBUG_ASSERT(m.is_locked());
+
+      std::uint8_t ind = get_ind(key);
 
       switch (node_type) {
       case node_type_t::NODE4:
@@ -173,21 +252,24 @@ private:
       case node_type_t::LEAF:
         ART_DEBUG_ASSERT("add called for leaf");
       }
+
+      concurrent_map::store_rs(version, load_aq(version) + 1);
     }
 
     node_t *expand() const {
       ART_DEBUG_ASSERT(this->size() != 0);
+      ART_DEBUG_ASSERT(m.is_locked());
 
       switch (node_type) {
       case node_type_t::NODE4:
-        if (this->size_state.num_deleted) {
+        if (this->num_deleted) {
           return new node4_t(static_cast<const node4_t *>(this));
         } else {
           return new node16_t(static_cast<const node4_t *>(this));
         }
 
       case node_type_t::NODE16:
-        if (this->size_state.num_deleted) {
+        if (this->num_deleted) {
           return new node16_t(static_cast<const node16_t *>(this));
         } else {
           return new node48_t(static_cast<const node16_t *>(this));
@@ -230,6 +312,7 @@ private:
 
     node_t *shrink() const {
       ART_DEBUG_ASSERT(this->size() != 0);
+      ART_DEBUG_ASSERT(m.is_locked());
 
       switch (node_type) {
       case node_type_t::NODE4:
@@ -251,28 +334,29 @@ private:
       return nullptr;
     }
 
-    void free() {
-      ART_DEBUG_ASSERT(this->is_leaf() || this->size() != 0);
+    static void free(node_t *node) {
+      ART_DEBUG_ASSERT(node->is_leaf() || node->size() != 0);
+      ART_DEBUG_ASSERT(!node->m.is_locked());
 
-      switch (node_type) {
+      switch (node->node_type) {
       case node_type_t::NODE4:
-        delete static_cast<node4_t *>(this);
+        delete static_cast<node4_t *>(node);
         break;
 
       case node_type_t::NODE16:
-        delete static_cast<node16_t *>(this);
+        delete static_cast<node16_t *>(node);
         break;
 
       case node_type_t::NODE48:
-        delete static_cast<node48_t *>(this);
+        delete static_cast<node48_t *>(node);
         break;
 
       case node_type_t::NODE256:
-        delete static_cast<node256_t *>(this);
+        delete static_cast<node256_t *>(node);
         break;
 
       case node_type_t::LEAF:
-        delete static_cast<leaf_t *>(this);
+        delete static_cast<leaf_t *>(node);
         break;
       }
     }
@@ -301,29 +385,30 @@ private:
   struct leaf_t : node_t {
     value_type value;
 
-    leaf_t(key_type key, value_type a_value, int keylen)
-        : node_t(node_type_t::LEAF, key, keylen), value(a_value) {
-      ART_DEBUG_ASSERT(keylen > 0);
-    }
+    leaf_t(key_type key, value_type a_value)
+        : node_t(node_type_t::LEAF, key, KEYTYPE_SIZE), value(a_value) {}
   };
+
+  using atomic_key_t = std::atomic<std::uint8_t>;
+  using atomic_node_t = std::atomic<node_t *>;
 
   struct node4_t : node_t {
     static constexpr int MAX_CHILDREN = 4;
     static constexpr int MAX_KEYS = 4;
 
-    uint8_t keys[MAX_CHILDREN];
-    node_t *children[MAX_CHILDREN];
+    atomic_key_t keys[MAX_CHILDREN];
+    atomic_node_t children[MAX_CHILDREN];
 
-    node4_t(key_type key, uint8_t keylen)
-        : node_t(node_type_t::NODE4, key, keylen) {
-      std::fill(children, children + MAX_CHILDREN, nullptr);
+    node4_t(key_type key, std::int8_t level)
+        : node_t(node_type_t::NODE4, key, level) {
+      concurrent_map::fill_zero_rx(children, MAX_CHILDREN);
     }
 
-    node4_t(const node16_t *node) : node4_t(node->key, node->keylen) {
+    node4_t(const node16_t *node) : node4_t(node->key, node->level) {
       copy(this, node);
     }
 
-    node4_t(const node4_t *node) : node4_t(node->key, node->keylen) {
+    node4_t(const node4_t *node) : node4_t(node->key, node->level) {
       copy(this, node);
     }
 
@@ -331,26 +416,32 @@ private:
     static void copy(NodeTypeDst *dst, const NodeTypeSrc *src) {
       ART_DEBUG_ASSERT(src->size() <= NodeTypeDst::MAX_CHILDREN);
 
-      for (int i = 0; i < src->size_state.num_children; i++) {
-        if (src->children[i]) {
-          dst->add(src->children[i], src->keys[i]);
+      int num_children = load_aq(src->num_children);
+
+      for (int i = 0; i < num_children; i++) {
+        if (load_aq(src->children[i])) {
+          dst->add(load_aq(src->children[i]), load_aq(src->keys[i]));
         }
       }
 
       ART_DEBUG_ASSERT(dst->equals(src));
     }
 
-    static void add(uint8_t *keys, node_t **children,
-                    node_size_state_t &size_state, node_t *node, uint8_t ind) {
-      keys[size_state.num_children] = ind;
-      children[size_state.num_children] = node;
-      size_state.num_children++;
+    static void add(atomic_key_t *keys, atomic_node_t *children,
+                    std::atomic<std::int16_t> &num_children, node_t *node,
+                    std::uint8_t ind) {
+      int num_children_loc = load_aq(num_children);
+
+      concurrent_map::store_rs(keys[num_children_loc], ind);
+      concurrent_map::store_rs(children[num_children_loc], node);
+      concurrent_map::store_rs(num_children, num_children_loc + 1);
     }
 
-    static uint8_t find_pos(const uint8_t *keys, node_t *const *children,
-                            uint8_t num_children, uint8_t ind) {
-      for (uint8_t pos = 0; pos < num_children; pos++) {
-        if (ind == keys[pos] && children[pos]) {
+    static std::uint8_t find_pos(const atomic_key_t *keys,
+                                 const atomic_node_t *children,
+                                 int num_children, std::uint8_t ind) {
+      for (std::uint8_t pos = 0; pos < num_children; pos++) {
+        if (load_aq(children[pos]) && ind == load_aq(keys[pos])) {
           return pos;
         }
       }
@@ -358,63 +449,74 @@ private:
       return num_children;
     }
 
-    static node_t *find(const uint8_t *keys, node_t *const *children,
-                        uint8_t num_children, uint8_t ind) {
-      uint8_t pos = find_pos(keys, children, num_children, ind);
+    static node_t *find(const atomic_key_t *keys, const atomic_node_t *children,
+                        int num_children, std::uint8_t ind) {
+      std::uint8_t pos = find_pos(keys, children, num_children, ind);
 
-      return pos < num_children ? children[pos] : nullptr;
+      return pos < num_children ? load_aq(children[pos]) : nullptr;
     }
 
-    static void remove(uint8_t *keys, node_t **children,
-                       node_size_state_t &size_state, uint8_t ind) {
-      uint8_t pos = find_pos(keys, children, size_state.num_children, ind);
-
-      ART_DEBUG_ASSERT(pos < size_state.num_children);
-
-      children[pos] = nullptr;
-      size_state.num_deleted++;
-    }
-
-    static node_t *update(uint8_t *keys, node_t **children,
-                          uint8_t num_children, uint8_t ind,
-                          node_t *new_child) {
-      uint8_t pos = find_pos(keys, children, num_children, ind);
+    static void remove(const atomic_key_t *keys, atomic_node_t *children,
+                       std::atomic<std::int16_t> &num_children,
+                       std::atomic<std::int16_t> &num_deleted,
+                       std::uint8_t ind) {
+      std::uint8_t pos = find_pos(keys, children, load_aq(num_children), ind);
 
       ART_DEBUG_ASSERT(pos < num_children);
 
-      return std::exchange(children[pos], new_child);
+      concurrent_map::store_rs(children[pos], nullptr);
+      concurrent_map::store_rs(num_deleted, load_aq(num_deleted) + 1);
     }
 
-    bool add(node_t *node, uint8_t ind) {
-      if (this->size_state.num_children != MAX_CHILDREN) {
-        add(keys, children, this->size_state, node, ind);
+    static node_t *update(atomic_key_t *keys, atomic_node_t *children,
+                          int num_children, std::uint8_t ind,
+                          node_t *new_child) {
+      std::uint8_t pos = find_pos(keys, children, num_children, ind);
+
+      ART_DEBUG_ASSERT(pos < num_children);
+
+      return concurrent_map::xchg_rs(children[pos], new_child);
+    }
+
+    bool add(node_t *node, std::uint8_t ind) {
+      int num_children = load_aq(this->num_children);
+
+      if (num_children != MAX_CHILDREN) {
+        add(keys, children, this->num_children, node, ind);
         return true;
       }
 
       return false;
     }
 
-    node_t *find(uint8_t ind) const {
-      return find(keys, children, this->size_state.num_children, ind);
+    bool add(node_t *node) { return add(node, this->get_ind(node->key)); }
+
+    node_t *find(std::uint8_t ind) const {
+      const atomic_node_t *children = this->children;
+      return find(keys, children, load_aq(this->num_children), ind);
     }
 
-    node_t *update(node_t *new_child, uint8_t ind) {
-      return update(keys, children, this->size_state.num_children, ind,
+    node_t *update(node_t *new_child, std::uint8_t ind) {
+      atomic_node_t *children = this->children;
+      return update(keys, children, load_aq(this->num_children), ind,
                     new_child);
     }
 
-    void remove(uint8_t ind) { remove(keys, children, this->size_state, ind); }
+    void remove(std::uint8_t ind) {
+      remove(keys, children, this->num_children, this->num_deleted, ind);
+    }
 
     bool is_underfull() const { return this->size() <= 1; }
 
     node_t *shrink() const {
       ART_DEBUG_ASSERT(this->size() == 1);
 
-      for (int i = 0; i < this->size_state.num_children; i++) {
-        node_t *child = children[i];
+      int num_children = load_aq(this->num_children);
+
+      for (int i = 0; i < num_children; i++) {
+        node_t *child = load_aq(children[i]);
 
         if (child) {
-          child->keylen += this->keylen;
           return child;
         }
       }
@@ -427,56 +529,61 @@ private:
     static constexpr int MAX_CHILDREN = 16;
     static constexpr int MAX_KEYS = 16;
 
-    uint8_t keys[MAX_CHILDREN];
-    node_t *children[MAX_CHILDREN];
+    atomic_key_t keys[MAX_CHILDREN];
+    atomic_node_t children[MAX_CHILDREN];
 
-    node16_t(key_type key, uint8_t keylen)
-        : node_t(node_type_t::NODE16, key, keylen) {
-      std::fill(children, children + MAX_CHILDREN, nullptr);
+    node16_t(key_type key, std::int8_t level)
+        : node_t(node_type_t::NODE16, key, level) {
+      concurrent_map::fill_zero_rx(children, MAX_CHILDREN);
     }
 
-    node16_t(const node4_t *node) : node16_t(node->key, node->keylen) {
+    node16_t(const node4_t *node) : node16_t(node->key, node->level) {
       node4_t::copy(this, node);
     }
 
-    node16_t(const node16_t *node) : node16_t(node->key, node->keylen) {
+    node16_t(const node16_t *node) : node16_t(node->key, node->level) {
       node4_t::copy(this, node);
     }
 
-    node16_t(const node48_t *node) : node16_t(node->key, node->keylen) {
+    node16_t(const node48_t *node) : node16_t(node->key, node->level) {
       for (int i = 0, pos = 0; i < node48_t::MAX_KEYS; i++) {
-        if (node->keys[i]) {
-          keys[pos] = i;
-          children[pos] = node->children[node->keys[i] - 1];
+        std::uint8_t ind = load_aq(node->keys[i]);
+        if (ind) {
+          concurrent_map::store_rs(keys[pos], i);
+          concurrent_map::store_rs(children[pos],
+                                   load_aq(node->children[ind - 1]));
           pos++;
         }
       }
 
-      this->size_state.num_children = node->size_state.num_children;
+      this->num_children = load_aq(node->num_children);
 
       ART_DEBUG_ASSERT(this->equals(node));
     }
 
-    bool add(node_t *node, uint8_t ind) {
-      if (this->size_state.num_children != MAX_CHILDREN) {
-        node4_t::add(keys, children, this->size_state, node, ind);
+    bool add(node_t *node, std::uint8_t ind) {
+      int num_children = load_aq(this->num_children);
+
+      if (num_children != MAX_CHILDREN) {
+        node4_t::add(keys, children, this->num_children, node, ind);
         return true;
       }
 
       return false;
     }
 
-    node_t *find(uint8_t ind) const {
-      return node4_t::find(keys, children, this->size_state.num_children, ind);
+    node_t *find(std::uint8_t ind) const {
+      return node4_t::find(keys, children, this->num_children, ind);
     }
 
-    node_t *update(node_t *new_child, uint8_t ind) {
-      return node4_t::update(keys, children, this->size_state.num_children, ind,
+    node_t *update(node_t *new_child, std::uint8_t ind) {
+      return node4_t::update(keys, children, this->num_children, ind,
                              new_child);
     }
 
-    void remove(uint8_t ind) {
-      node4_t::remove(keys, children, this->size_state, ind);
+    void remove(std::uint8_t ind) {
+      node4_t::remove(keys, children, this->num_children, this->num_deleted,
+                      ind);
     }
 
     bool is_underfull() const { return this->size() <= node4_t::MAX_CHILDREN; }
@@ -487,9 +594,9 @@ private:
     static constexpr int MAX_KEYS = 256;
     static constexpr uint64_t ONE = 1;
 
-    uint8_t keys[MAX_KEYS];
+    atomic_key_t keys[MAX_KEYS];
     std::uint64_t freemap;
-    node_t *children[MAX_CHILDREN];
+    atomic_node_t children[MAX_CHILDREN];
 
     inline void mark_used(int pos) {
       freemap |= ONE << (MAX_CHILDREN - 1 - pos);
@@ -510,34 +617,41 @@ private:
       return MAX_CHILDREN - (UINT64_BITS - ind);
     }
 
-    node48_t(key_type key, uint8_t keylen)
-        : node_t(node_type_t::NODE48, key, keylen), freemap(0) {
-      std::fill(keys, keys + MAX_KEYS, 0);
-      std::fill(children, children + MAX_CHILDREN, nullptr);
+    node48_t(key_type key, std::int8_t level)
+        : node_t(node_type_t::NODE48, key, level), freemap(0) {
+      concurrent_map::fill_zero_rx(keys, MAX_KEYS);
+      concurrent_map::fill_zero_rx(children, MAX_CHILDREN);
     }
 
-    node48_t(const node16_t *node) : node48_t(node->key, node->keylen) {
+    node48_t(const node16_t *node) : node48_t(node->key, node->level) {
       node4_t::copy(this, node);
     }
 
-    node48_t(const node256_t *node) : node48_t(node->key, node->keylen) {
-      ART_DEBUG_ASSERT(node->size_state.num_children <= MAX_CHILDREN);
-      this->size_state.num_children = node->size_state.num_children;
+    node48_t(const node256_t *node) : node48_t(node->key, node->level) {
+      ART_DEBUG_ASSERT(node->num_children <= MAX_CHILDREN);
+
+      auto src_num_children = load_aq(node->num_children);
 
       for (int i = 0, pos = 0; i < node256_t::MAX_CHILDREN; i++) {
-        if (node->children[i]) {
-          keys[i] = pos + 1;
-          children[pos] = node->children[i];
+        node_t *child = load_aq(node->children[i]);
+
+        if (child) {
+          concurrent_map::store_rs(keys[i], pos + 1);
+          concurrent_map::store_rs(children[pos], child);
           mark_used(pos);
           pos++;
         }
       }
 
+      this->num_children = src_num_children;
+
       ART_DEBUG_ASSERT(this->equals(node));
     }
 
-    bool add(node_t *node, uint8_t ind) {
-      if (this->size_state.num_children == MAX_CHILDREN) {
+    bool add(node_t *node, std::uint8_t ind) {
+      int num_children = load_aq(this->num_children);
+
+      if (num_children == MAX_CHILDREN) {
         return false;
       }
 
@@ -545,31 +659,34 @@ private:
 
       ART_DEBUG_ASSERT(pos < MAX_CHILDREN);
 
-      keys[ind] = pos + 1;
-      children[pos] = node;
-      this->size_state.num_children++;
+      concurrent_map::store_rs(children[pos], node);
+      concurrent_map::store_rs(keys[ind], static_cast<std::uint8_t>(pos + 1));
+      concurrent_map::store_rs(this->num_children,
+                               static_cast<std::int16_t>(num_children + 1));
 
       return true;
     }
 
-    node_t *find(uint8_t ind) const {
-      return keys[ind] ? children[keys[ind] - 1] : nullptr;
+    node_t *find(std::uint8_t ind) const {
+      return load_aq(keys[ind]) ? load_aq(children[keys[ind] - 1]) : nullptr;
     }
 
-    node_t *update(node_t *new_child, uint8_t ind) {
-      return keys[ind] ? std::exchange(children[keys[ind] - 1], new_child)
-                       : nullptr;
+    node_t *update(node_t *new_child, std::uint8_t ind) {
+      auto pos = load_aq(keys[ind]);
+      return pos ? concurrent_map::xchg_rs(children[pos - 1], new_child)
+                 : nullptr;
     }
 
-    void remove(uint8_t ind) {
+    void remove(std::uint8_t ind) {
       ART_DEBUG_ASSERT(keys[ind] != 0);
       ART_DEBUG_ASSERT(children[keys[ind] - 1] != nullptr);
 
-      int pos = keys[ind] - 1;
-      children[pos] = nullptr;
-      keys[ind] = 0;
+      int pos = load_aq(keys[ind]) - 1;
+      concurrent_map::store_rs(children[pos], nullptr);
+      concurrent_map::store_rs(keys[ind], 0);
       mark_free(pos);
-      this->size_state.num_children--;
+      concurrent_map::store_rs(this->num_children,
+                               load_aq(this->num_children) - 1);
     }
 
     bool is_underfull() const { return this->size() <= node16_t::MAX_CHILDREN; }
@@ -579,43 +696,49 @@ private:
     static constexpr int MAX_CHILDREN = 256;
     static constexpr int MAX_KEYS = 256;
 
-    node_t *children[MAX_CHILDREN];
+    atomic_node_t children[MAX_CHILDREN];
 
-    node256_t(key_type key, uint8_t keylen)
-        : node_t(node_type_t::NODE256, key, keylen) {
-      std::fill(children, children + MAX_CHILDREN, nullptr);
+    node256_t(key_type key, std::int8_t level)
+        : node_t(node_type_t::NODE256, key, level) {
+      concurrent_map::fill_zero_rx(children, MAX_CHILDREN);
     }
 
-    node256_t(const node48_t *node) : node256_t(node->key, node->keylen) {
-      this->size_state.num_children = node->size_state.num_children;
-
+    node256_t(const node48_t *node) : node256_t(node->key, node->level) {
       for (int i = 0; i < node48_t::MAX_KEYS; i++) {
-        if (node->keys[i]) {
-          children[i] = node->children[node->keys[i] - 1];
+        auto ind = load_aq(node->keys[i]);
+
+        if (ind) {
+          concurrent_map::store_rs(children[i],
+                                   load_aq(node->children[ind - 1]));
         }
       }
+
+      this->num_children = load_aq(node->num_children);
 
       ART_DEBUG_ASSERT(this->equals(node));
     }
 
-    bool add(node_t *node, uint8_t ind) {
+    bool add(node_t *node, std::uint8_t ind) {
       ART_DEBUG_ASSERT(children[ind] == nullptr);
-      ART_DEBUG_ASSERT(this->size_state.num_children < MAX_CHILDREN);
+      ART_DEBUG_ASSERT(this->num_children < MAX_CHILDREN);
 
-      children[ind] = node;
-      this->size_state.num_children++;
+      concurrent_map::store_rs(children[ind], node);
+      concurrent_map::store_rs(
+          this->num_children,
+          static_cast<std::int16_t>(load_aq(this->num_children) + 1));
       return true;
     }
 
-    node_t *find(uint8_t ind) const { return children[ind]; }
+    node_t *find(std::uint8_t ind) const { return load_aq(children[ind]); }
 
-    node_t *update(node_t *new_child, uint8_t ind) {
-      return std::exchange(children[ind], new_child);
+    node_t *update(node_t *new_child, std::uint8_t ind) {
+      return xchg_rs(children[ind], new_child);
     }
 
-    void remove(uint8_t ind) {
-      children[ind] = nullptr;
-      this->size_state.num_children--;
+    void remove(std::uint8_t ind) {
+      concurrent_map::store_rs(children[ind], nullptr);
+      concurrent_map::store_rs(this->num_children,
+                               load_aq(this->num_children) - 1);
     }
 
     bool is_underfull() const { return this->size() <= node48_t::MAX_CHILDREN; }
@@ -627,209 +750,424 @@ private:
     UOP_Upsert,
   };
 
-  template <UpdateOp UOp>
-  static std::optional<value_type> update_leaf(node_t *node, value_type value) {
-    auto leaf = static_cast<leaf_t *>(node);
-    if constexpr (UOp != UpdateOp::UOP_Insert) {
-      return std::exchange(leaf->value, value);
-    } else {
+  using LockType = std::unique_lock<utils::Mutex>;
+
+  struct EpochGuard {
+    const concurrent_map *map;
+
+    EpochGuard(const concurrent_map *a_map) : map(a_map) {
+      map->m_gc.enter_epoch();
+    }
+
+    ~EpochGuard() { map->m_gc.exit_epoch(); }
+  };
+
+  struct node_snapshot_t {
+    node_t *node;
+    version_t version;
+
+    node_snapshot_t() : node(nullptr), version(0) {}
+    node_snapshot_t(node_t *a_node)
+        : node(a_node), version(node ? load_aq(node->version) : 0) {}
+    node_snapshot_t(const node_snapshot_t &) = default;
+
+    void load_snapshot(node_t *node) {
+      this->node = node;
+      this->version = node ? load_aq(node->version) : 0;
+    }
+
+    LockType lock() {
+      LockType lock{node->m};
+
+      if (load_aq(node->version) != version) {
+        lock.unlock();
+      }
+
+      return lock;
+    }
+
+    LockType lock_root(concurrent_map &map) {
+      LockType lock{*map.root_mtx};
+
+      if (node != load_aq(map.root)) {
+        lock.unlock();
+      }
+
+      return lock;
+    }
+
+    node_t *operator->() { return node; }
+    explicit operator bool() { return node != nullptr; }
+  };
+
+  struct traverser_t {
+    concurrent_map &map;
+    EpochGuard guard;
+
+    bool is_snapshot_stale;
+    node_snapshot_t root_snapshot;
+
+    traverser_t(concurrent_map &map)
+        : map(map), guard(std::addressof(map)), is_snapshot_stale(false),
+          root_snapshot(load_aq(map.root)) {}
+
+    template <UpdateOp UOp>
+    std::optional<value_type> update_leaf(node_snapshot_t &node,
+                                          value_type value) {
+      auto leaf = static_cast<leaf_t *>(node.node);
+
+      if constexpr (UOp != UpdateOp::UOP_Insert) {
+        if (auto lock = node.lock()) {
+          return std::exchange(leaf->value, value);
+        } else {
+          is_snapshot_stale = true;
+        }
+      }
+
       return leaf->value;
     }
-  }
 
-  void add_to_parent(node_t *parent, node_t *grand_parent, node_t *node,
-                     int depth) {
-    if (parent) {
-      uint8_t ind = node_t::get_ind(node->key, depth);
+    bool replace_root(node_t *node) {
+      if (auto lock = root_snapshot.lock_root(map)) {
+        if (root_snapshot.node) {
+          auto newroot = new node4_t(0, 0);
 
-      if (!parent->add(node, ind)) {
-        node_t *old = parent;
-        parent = old->expand();
-
-        parent->add(node, ind);
-
-        if (grand_parent) {
-          grand_parent->update(parent, node_t::get_ind(node->key, depth - 1));
+          newroot->add(node);
+          newroot->add(root_snapshot.node);
+          map.root = newroot;
         } else {
-          root = parent;
+          map.root = node;
         }
 
-        old->free();
+        return true;
       }
-    } else {
-      if (root) {
-        node_t *newroot = new node4_t(0, 0);
 
-        newroot->add(node, node_t::get_ind(node->key, depth));
-        newroot->add(root, node_t::get_ind(root->key, depth));
-        root = newroot;
+      return false;
+    }
+
+    bool update_parent(node_t *node, node_snapshot_t &parent) {
+      if (parent) {
+        if (auto lock = parent.lock()) {
+          parent->update(node);
+          return true;
+        }
       } else {
-        root = node;
+        if (auto lock = root_snapshot.lock_root(map)) {
+          map.root = node;
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    void shrink_node(node_snapshot_t &node, node_snapshot_t &parent) {
+      if (auto nodelock = node.lock()) {
+        if (node->size()) {
+          node_t *replacement = node->shrink();
+
+          ART_DEBUG_ASSERT(replacement != nullptr);
+
+          nodelock.unlock();
+
+          LockType child_lock{replacement->m};
+
+          if (!replacement->is_deleted()) {
+            if (auto nodelock = node.lock()) {
+              if (update_parent(replacement, parent)) {
+                node->mark_as_deleted();
+                nodelock.unlock();
+                map.m_gc.retire_in_new_epoch(node_t::free, node.node);
+                return;
+              }
+            }
+          }
+
+          if (node->node_type != node_type_t::NODE4) {
+            delete replacement;
+          }
+        } else {
+          if (parent) {
+            if (auto lock = parent.lock()) {
+              parent->remove(node->key);
+              node->mark_as_deleted();
+              nodelock.unlock();
+              map.m_gc.retire_in_new_epoch(node_t::free, node.node);
+            }
+          } else {
+            if (auto lock = root_snapshot.lock_root(map)) {
+              map.root = nullptr;
+              node->mark_as_deleted();
+              nodelock.unlock();
+              map.m_gc.retire_in_new_epoch(node_t::free, node.node);
+            }
+          }
+        }
       }
     }
-  }
 
-  void replace_node(key_type key, value_type value, int depth, int lcpl,
-                    node_t *node, node_t *parent) {
-    int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
-    auto leaf =
-        new leaf_t(key, value, KEYTYPE_SIZE - depth - common_prefix_len);
-    key_type prefix = node_t::extract_common_prefix(key, lcpl);
-    auto inner = new node4_t(prefix, common_prefix_len);
+    std::optional<value_type> remove_leaf(leaf_t *leaf, node_snapshot_t &node,
+                                          node_snapshot_t &parent) {
+      value_type oldval = leaf->value;
 
-    inner->add(node, node_t::get_ind(node->key, depth + common_prefix_len));
-    inner->add(leaf, node_t::get_ind(leaf->key, depth + common_prefix_len));
+      is_snapshot_stale = true;
 
-    node->keylen -= common_prefix_len;
+      if (auto lock = node.lock()) {
+        if (parent) {
+          if (auto lock = parent.lock()) {
+            parent->remove(leaf->key);
+            leaf->mark_as_deleted();
+            is_snapshot_stale = false;
+          }
+        } else {
+          if (auto lock = root_snapshot.lock_root(map)) {
+            map.root = nullptr;
+            is_snapshot_stale = false;
+          }
+        }
+      }
 
-    if (parent) {
-      parent->update(inner, node_t::get_ind(inner->key, depth));
-    } else {
-      root = inner;
+      if (!is_snapshot_stale) {
+        map.m_gc.retire_in_new_epoch(node_t::free, leaf);
+      }
+
+      return oldval;
     }
-  }
 
-  template <UpdateOp UOp>
-  void insert_leaf(key_type key, value_type value, int depth, int lcpl,
-                   node_t *node, node_t *parent, node_t *grand_parent) {
-    if constexpr (UOp != UpdateOp::UOP_Update) {
-      int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
+    node_t *expand_node(node_t *node, node_snapshot_t &parent,
+                        LockType &oldlock) {
+      node_t *old = node;
 
-      if (common_prefix_len && (node->is_leaf() || node->keylen)) {
-        replace_node(key, value, depth, lcpl, node, parent);
+      node = node->expand();
+
+      LockType lock{node->m};
+
+      if (update_parent(node, parent)) {
+        old->mark_as_deleted();
+        oldlock = std::move(lock);
+        map.m_gc.retire_in_new_epoch(node_t::free, old);
       } else {
-        add_to_parent(parent, grand_parent,
-                      new leaf_t(key, value, KEYTYPE_SIZE - depth), depth);
+        lock.unlock();
+        delete node;
+        node = nullptr;
       }
+
+      return node;
     }
-  }
 
-  template <UpdateOp UOp>
-  std::optional<value_type> insert(key_type key, value_type value) {
-    node_t *grand_parent = nullptr;
-    node_t *parent = nullptr;
-    node_t *node = root;
-    int depth = 0;
+    bool add_to_parent(node_t *node, node_snapshot_t &parent,
+                       node_snapshot_t &grand_parent) {
+      if (parent) {
+        if (auto lock = parent.lock()) {
+          if (!parent->add(node)) {
+            node_t *newparent = expand_node(parent.node, grand_parent, lock);
 
-    while (node) {
-      int lcpl = node->longest_common_prefix_length(key);
-      int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
+            if (newparent) {
+              newparent->add(node);
+              return true;
+            } else {
+              return false;
+            }
+          }
 
-      if (node->is_leaf()) {
-        if (node->key == key) {
-          return update_leaf<UOp>(node, value);
+          return true;
+        }
+      } else {
+        return replace_root(node);
+      }
+
+      return false;
+    }
+
+    node4_t *decompress_node(node_t *node, int lcpl) {
+      key_type prefix = node_t::extract_common_prefix(node->key, lcpl);
+      auto decomped_node = new node4_t(prefix, lcpl);
+
+      decomped_node->add(node);
+
+      return decomped_node;
+    }
+
+    template <UpdateOp UOp>
+    bool insert_leaf(key_type key, value_type value, int depth, int lcpl,
+                     node_snapshot_t &node, node_snapshot_t &parent,
+                     node_snapshot_t &grand_parent) {
+      if constexpr (UOp != UpdateOp::UOP_Update) {
+        int keylen = node->level - depth;
+        int common_prefix_len = std::min(lcpl - depth, keylen);
+        auto leaf = new leaf_t(key, value);
+
+        if (common_prefix_len && (node->is_leaf() || keylen)) {
+          if (auto lock = node.lock()) {
+            node4_t *decomped_node = decompress_node(node.node, lcpl);
+
+            decomped_node->add(leaf);
+
+            if (update_parent(decomped_node, parent)) {
+              return true;
+            } else {
+              delete decomped_node;
+            }
+          }
+        } else {
+          if (add_to_parent(leaf, parent, grand_parent)) {
+            return true;
+          }
         }
 
-        insert_leaf<UOp>(key, value, depth, lcpl, node, parent, grand_parent);
-        return {};
+        delete leaf;
+        return false;
       }
 
-      if (common_prefix_len == node->keylen) {
-        depth += common_prefix_len;
+      return true;
+    }
+
+    template <UpdateOp UOp>
+    std::optional<value_type> insert(key_type key, value_type value) {
+      int depth = 0;
+      node_snapshot_t node, parent, grand_parent;
+
+      node = root_snapshot;
+
+      while (node) {
+        int lcpl = node->longest_common_prefix_length(key);
+        int keylen = node->level - depth;
+        int common_prefix_len = std::min(lcpl - depth, keylen);
+
+        if (node->is_leaf()) {
+          if (node->key == key) {
+            return update_leaf<UOp>(node, value);
+          }
+
+          if (!insert_leaf<UOp>(key, value, depth, lcpl, node, parent,
+                                grand_parent)) {
+            is_snapshot_stale = true;
+          }
+
+          return {};
+        }
+
+        if (common_prefix_len == keylen) {
+          depth += common_prefix_len;
+
+          ART_DEBUG_ASSERT(depth < MAX_DEPTH);
+
+          grand_parent = parent;
+          parent = node;
+          node.load_snapshot(node->find(key));
+        } else {
+          if (!insert_leaf<UOp>(key, value, depth, lcpl, node, parent,
+                                grand_parent)) {
+            is_snapshot_stale = true;
+          }
+
+          return {};
+        }
+      }
+
+      if constexpr (UOp != UpdateOp::UOP_Update) {
+        if (!add_to_parent(new leaf_t(key, value), parent, grand_parent)) {
+          is_snapshot_stale = true;
+        }
+      }
+
+      return {};
+    }
+
+    std::optional<value_type> erase(key_type key) {
+      int depth = 0;
+      node_snapshot_t node, parent, grand_parent;
+
+      node = root_snapshot;
+
+      while (node) {
+        if (node->is_leaf()) {
+          auto leaf = static_cast<leaf_t *>(node.node);
+
+          if (leaf->key == key) {
+            if (auto old = remove_leaf(leaf, node, parent)) {
+              if (parent && parent->is_underfull()) {
+                shrink_node(parent, grand_parent);
+              }
+
+              return old;
+            }
+          }
+
+          break;
+        }
+
+        int keylen = node->level - depth;
+
+        if (keylen) {
+          int lcpl = node->longest_common_prefix_length(key);
+          int common_prefix_len = std::min(lcpl - depth, keylen);
+
+          if (common_prefix_len != keylen) {
+            break;
+          }
+
+          depth += keylen;
+        }
 
         ART_DEBUG_ASSERT(depth < MAX_DEPTH);
 
         grand_parent = parent;
         parent = node;
-        node = node->find(node_t::get_ind(key, depth));
-      } else {
-        insert_leaf<UOp>(key, value, depth, lcpl, node, parent, grand_parent);
-        return {};
+        node.load_snapshot(node->find(key));
       }
-    }
 
-    if constexpr (UOp != UpdateOp::UOP_Update) {
-      add_to_parent(parent, grand_parent,
-                    new leaf_t(key, value, KEYTYPE_SIZE - depth), depth);
-    }
-
-    return {};
-  }
-
-  void shrink_node(node_t *node, node_t *parent, key_type key, int depth) {
-    node_t *replacement = node->shrink();
-
-    ART_DEBUG_ASSERT(replacement != nullptr);
-
-    if (parent) {
-      auto old = parent->update(replacement, node_t::get_ind(key, depth));
-      ART_DEBUG_ASSERT(old == node);
-      ART_DEBUG_ONLY(old);
-    } else {
-      root = replacement;
-    }
-
-    node->free();
-  }
-
-  std::optional<value_type> erase(node_t *node, node_t *parent, key_type key,
-                                  int depth) {
-    if (!node) {
       return {};
     }
+  };
 
-    if (node->is_leaf()) {
-      auto leaf = static_cast<leaf_t *>(node);
+  template <UpdateOp UOp>
+  std::optional<value_type> insert(key_type key, value_type value) {
+    while (true) {
+      traverser_t traverser{*this};
+      auto old = traverser.template insert<UOp>(key, value);
 
-      if (leaf->key == key) {
-        value_type oldval = leaf->value;
-        int leaf_ind = node_t::get_ind(key, depth);
-
-        if (parent) {
-          parent->remove(leaf_ind);
-        } else {
-          root = nullptr;
-        }
-
-        leaf->free();
-        return oldval;
-      } else {
-        return {};
+      if (!traverser.is_snapshot_stale) {
+        return old;
       }
     }
+  }
 
-    if (node->keylen) {
-      int lcpl = node->longest_common_prefix_length(key);
-      int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
+  std::optional<value_type> erase(key_type key) {
+    while (true) {
+      traverser_t traverser{*this};
+      auto value = traverser.erase(key);
 
-      if (common_prefix_len != node->keylen) {
-        return {};
+      if (!traverser.is_snapshot_stale) {
+        return value;
       }
-
-      depth += node->keylen;
     }
-
-    ART_DEBUG_ASSERT(depth < MAX_DEPTH);
-
-    node_t *child = node->find(node_t::get_ind(key, depth));
-    auto val = erase(child, node, key, depth);
-
-    if (val && node->is_underfull()) {
-      shrink_node(node, parent, key, depth - node->keylen);
-    }
-
-    return val;
   }
 
   static constexpr bool INSERT = false;
   static constexpr bool UPSERT = true;
 
-  std::unique_ptr<utils::Mutex> mtx;
-  node_t *root;
-  std::size_t m_size;
+  std::unique_ptr<utils::Mutex> root_mtx;
+  atomic_node_t root;
+  std::unique_ptr<std::pair<std::size_t, std::size_t>[]> num_values;
 
-  using LockType = std::unique_lock<utils::Mutex>;
+  mutable indexes::utils::EpochManager<uint64_t, node_t> m_gc;
 
 public:
   concurrent_map()
-      : mtx(std::make_unique<utils::Mutex>()), root(nullptr), m_size(0) {}
+      : root_mtx(std::make_unique<utils::Mutex>()), root(nullptr),
+        num_values(std::make_unique<std::pair<std::size_t, std::size_t>[]>(
+            utils::ThreadLocal::MAX_THREADS)) {}
+
   concurrent_map(const concurrent_map &) = delete;
+
   concurrent_map(concurrent_map &&other)
-      : root(std::exchange(other.root, nullptr)),
-        m_size(std::exchange(other.m_size, 0)) {}
+      : root(other.root.exchange(nullptr)),
+        num_values(other.num_values.exchange(nullptr)) {}
 
   std::optional<value_type> Search(key_type key) const {
-    LockType lock{*mtx};
+    EpochGuard eg{this};
+
     int depth = 0;
     node_t *node = root;
 
@@ -843,66 +1181,69 @@ public:
         break;
       }
 
-      if (node->keylen) {
-        int lcpl = node->longest_common_prefix_length(key);
-        int common_prefix_len = std::min<int>(lcpl - depth, node->keylen);
+      int keylen = node->level - depth;
 
-        if (common_prefix_len != node->keylen) {
+      if (keylen) {
+        int lcpl = node->longest_common_prefix_length(key);
+        int common_prefix_len = std::min(lcpl - depth, keylen);
+
+        if (common_prefix_len != keylen) {
           break;
         }
 
-        depth += node->keylen;
+        depth += keylen;
       }
 
       ART_DEBUG_ASSERT(depth < MAX_DEPTH);
 
-      node = node->find(node_t::get_ind(key, depth));
+      node = node->find(key);
     }
 
     return {};
   }
 
   bool Insert(key_type key, value_type value) {
-    LockType lock{*mtx};
     auto &&old = insert<UpdateOp::UOP_Insert>(key, value);
 
     if (!old) {
-      m_size++;
+      num_values[utils::ThreadLocal::ThreadID()].first++;
     }
 
     return !old;
   }
 
   std::optional<value_type> Upsert(key_type key, value_type value) {
-    LockType lock{*mtx};
     auto &&old = insert<UpdateOp::UOP_Upsert>(key, value);
 
     if (!old) {
-      m_size++;
+      num_values[utils::ThreadLocal::ThreadID()].first++;
     }
 
     return old;
   }
 
   std::optional<value_type> Update(key_type key, value_type value) {
-    LockType lock{*mtx};
     return insert<UpdateOp::UOP_Update>(key, value);
   }
 
   std::optional<value_type> Delete(key_type key) {
-    LockType lock{*mtx};
-    auto &&old = erase(root, nullptr, key, 0);
+    auto &&old = erase(key);
 
     if (old) {
-      m_size--;
+      num_values[utils::ThreadLocal::ThreadID()].second++;
     }
 
     return old;
   }
 
   std::size_t size() const {
-    LockType lock{*mtx};
-    return m_size;
+    std::size_t size = 0;
+
+    for (int i = 0, n = utils::ThreadLocal::MAX_THREADS; i < n; i++) {
+      size += num_values[i].first - num_values[i].second;
+    }
+
+    return size;
   }
 
   ~concurrent_map() {
@@ -918,11 +1259,10 @@ public:
       children.pop_front();
 
       node->get_children(children);
-      node->free();
+      node_t::free(node);
     }
 
     root = nullptr;
-    m_size = 0;
   }
 
   void reserve(size_t) {

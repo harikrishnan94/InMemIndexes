@@ -13,6 +13,7 @@
 
 enum class ConcurrentMapTestWorkload {
   WL_CONTENTED,
+  WL_CONTENTED_SWAP,
   WL_RANDOM,
 };
 
