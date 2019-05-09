@@ -1147,23 +1147,28 @@ private:
   static constexpr bool INSERT = false;
   static constexpr bool UPSERT = true;
 
+  struct alignas(128) values_count_t {
+    std::atomic<size_t> num_inserts;
+    std::atomic<size_t> num_deletes;
+  };
+
   std::unique_ptr<utils::Mutex> root_mtx;
   atomic_node_t root;
-  std::unique_ptr<std::pair<std::size_t, std::size_t>[]> num_values;
+  std::unique_ptr<values_count_t[]> count;
 
   mutable indexes::utils::EpochManager<uint64_t, node_t> m_gc;
 
 public:
   concurrent_map()
       : root_mtx(std::make_unique<utils::Mutex>()), root(nullptr),
-        num_values(std::make_unique<std::pair<std::size_t, std::size_t>[]>(
+        count(std::make_unique<values_count_t[]>(
             utils::ThreadLocal::MAX_THREADS)) {}
 
   concurrent_map(const concurrent_map &) = delete;
 
   concurrent_map(concurrent_map &&other)
       : root(other.root.exchange(nullptr)),
-        num_values(std::exchange(other.num_values, nullptr)) {}
+        count(std::exchange(other.count, nullptr)) {}
 
   std::optional<value_type> Search(key_type key) const {
     EpochGuard eg{this};
@@ -1206,7 +1211,7 @@ public:
     auto &&old = insert<UpdateOp::UOP_Insert>(key, value);
 
     if (!old) {
-      num_values[utils::ThreadLocal::ThreadID()].first++;
+      count[utils::ThreadLocal::ThreadID()].num_inserts++;
     }
 
     return !old;
@@ -1216,7 +1221,7 @@ public:
     auto &&old = insert<UpdateOp::UOP_Upsert>(key, value);
 
     if (!old) {
-      num_values[utils::ThreadLocal::ThreadID()].first++;
+      count[utils::ThreadLocal::ThreadID()].num_inserts++;
     }
 
     return old;
@@ -1230,7 +1235,7 @@ public:
     auto &&old = erase(key);
 
     if (old) {
-      num_values[utils::ThreadLocal::ThreadID()].second++;
+      count[utils::ThreadLocal::ThreadID()].num_deletes++;
     }
 
     return old;
@@ -1240,7 +1245,7 @@ public:
     std::size_t size = 0;
 
     for (int i = 0, n = utils::ThreadLocal::MAX_THREADS; i < n; i++) {
-      size += num_values[i].first - num_values[i].second;
+      size += count[i].num_inserts - count[i].num_deletes;
     }
 
     return size;
