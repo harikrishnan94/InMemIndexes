@@ -2,7 +2,7 @@
 #include "sha512.h"
 #include "testConcurrentMapUtils.h"
 
-#include <catch.hpp>
+#include <doctest/doctest.h>
 #include <gsl/span>
 #include <tsl/robin_set.h>
 
@@ -50,7 +50,9 @@ template class indexes::btree::concurrent_map<int, int, IntCompare,
 template class indexes::btree::concurrent_map<std::string, int, StringCompare,
                                               btree_traits_string_key>;
 
-TEST_CASE("BtreeConcurrentMapBasic", "[btree]") {
+TEST_SUITE_BEGIN("concurrent_btree");
+
+TEST_CASE("BtreeConcurrentMapBasic") {
   indexes::utils::ThreadLocal::RegisterThread();
 
   indexes::btree::concurrent_map<int, int, IntCompare, btree_small_page_traits>
@@ -167,7 +169,7 @@ TEST_CASE("BtreeConcurrentMapBasic", "[btree]") {
   indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-TEST_CASE("BtreeConcurrentMapString", "[btree]") {
+TEST_CASE("BtreeConcurrentMapString") {
   indexes::utils::ThreadLocal::RegisterThread();
   indexes::btree::concurrent_map<std::string, int, StringCompare,
                                  btree_traits_string_key>
@@ -259,19 +261,21 @@ TEST_CASE("BtreeConcurrentMapString", "[btree]") {
   indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-TEST_CASE("BtreeConcurrentMapMixed", "[btree]") {
+TEST_CASE("BtreeConcurrentMapMixed") {
   MixedMapTest<indexes::btree::concurrent_map<int, int, IntCompare,
                                               btree_small_page_traits>>();
 }
 
-TEST_CASE("BtreeConcurrentMapConcurrencyRandom", "[btree]") {
+TEST_CASE("BtreeConcurrentMapConcurrencyRandom") {
   ConcurrentMapTest<indexes::btree::concurrent_map<
       int64_t, int64_t, LongCompare, btree_medium_page_traits>>(
       ConcurrentMapTestWorkload::WL_RANDOM);
 }
 
-TEST_CASE("BtreeConcurrentMapConcurrencyContented", "[btree]") {
+TEST_CASE("BtreeConcurrentMapConcurrencyContented") {
   ConcurrentMapTest<indexes::btree::concurrent_map<
       int64_t, int64_t, LongCompare, btree_medium_page_traits>>(
       ConcurrentMapTestWorkload::WL_CONTENTED);
 }
+
+TEST_SUITE_END();

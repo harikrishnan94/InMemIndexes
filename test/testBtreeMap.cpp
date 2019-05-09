@@ -1,7 +1,7 @@
 #include "indexes/btree/map.h"
 #include "sha512.h"
 
-#include <catch.hpp>
+#include <doctest/doctest.h>
 
 #include <limits>
 #include <map>
@@ -20,7 +20,9 @@ struct btree_traits_string_key : indexes::btree::btree_traits_debug {
 template class indexes::btree::map<int, int, btree_small_page_traits>;
 template class indexes::btree::map<std::string, int, btree_traits_string_key>;
 
-TEST_CASE("BtreeMapBasic", "[btree]") {
+TEST_SUITE_BEGIN("btree");
+
+TEST_CASE("BtreeMapBasic") {
   indexes::btree::map<int, int, btree_small_page_traits> map;
 
   int num_keys = 100000;
@@ -137,7 +139,7 @@ TEST_CASE("BtreeMapBasic", "[btree]") {
   }
 }
 
-TEST_CASE("BtreeMapString", "[btree]") {
+TEST_CASE("BtreeMapString") {
   indexes::btree::map<std::string, int, btree_traits_string_key> map;
 
   int num_keys = 100000;
@@ -229,7 +231,7 @@ TEST_CASE("BtreeMapString", "[btree]") {
   REQUIRE(map.find("") == map.end());
 }
 
-TEST_CASE("BtreeMapMixed", "[btree]") {
+TEST_CASE("BtreeMapMixed") {
   indexes::btree::map<int, int, btree_small_page_traits> map;
 
   int num_operations = 1024 * 1024;
@@ -320,3 +322,5 @@ TEST_CASE("BtreeMapMixed", "[btree]") {
 
   REQUIRE(map.size() == 0);
 }
+
+TEST_SUITE_END();

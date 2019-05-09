@@ -3,14 +3,16 @@
 #include "testConcurrentMapUtils.h"
 
 #include <absl/hash/hash.h>
-#include <catch.hpp>
+#include <doctest/doctest.h>
 
 #include <limits>
 #include <random>
 #include <string>
 #include <unordered_map>
 
-TEST_CASE("HashMapBasic", "[hashtable]") {
+TEST_SUITE_BEGIN("hashtable");
+
+TEST_CASE("HashMapBasic") {
   indexes::utils::ThreadLocal::RegisterThread();
   indexes::hashtable::concurrent_map<int, int, absl::Hash<int>,
                                      indexes::hashtable::hashtable_traits_debug>
@@ -48,7 +50,7 @@ TEST_CASE("HashMapBasic", "[hashtable]") {
   indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-TEST_CASE("HashMapString", "[hashtable]") {
+TEST_CASE("HashMapString") {
   indexes::utils::ThreadLocal::RegisterThread();
   indexes::hashtable::concurrent_map<std::string, int, absl::Hash<std::string>,
                                      indexes::hashtable::hashtable_traits_debug>
@@ -86,14 +88,16 @@ TEST_CASE("HashMapString", "[hashtable]") {
   indexes::utils::ThreadLocal::UnregisterThread();
 }
 
-TEST_CASE("HashMapMixed", "[hashtable]") {
+TEST_CASE("HashMapMixed") {
   MixedMapTest<indexes::hashtable::concurrent_map<
       int, int, absl::Hash<int>, indexes::hashtable::hashtable_traits_debug>>();
 }
 
-TEST_CASE("HashMapConcurrencyRandom", "[hashtable]") {
+TEST_CASE("HashMapConcurrencyRandom") {
   ConcurrentMapTest<indexes::hashtable::concurrent_map<
       int64_t, int64_t, absl::Hash<int64_t>,
       indexes::hashtable::hashtable_traits_debug>>(
       ConcurrentMapTestWorkload::WL_RANDOM);
 }
+
+TEST_SUITE_END();

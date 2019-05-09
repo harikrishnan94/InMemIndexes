@@ -30,6 +30,11 @@ set(BENCHMARK "bench_${PROJECT_NAME}")
 set(RAND_INT_BENCH "bench_${PROJECT_NAME}_rand_int")
 set(YCSB_BENCH "ycsb")
 
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 message(STATUS "Building ${CMAKE_BUILD_TYPE} version!")
@@ -41,7 +46,8 @@ include_directories(AFTER "include")
 find_package(Threads)
 find_package(unofficial-abseil CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
-find_path(VCPKG_INCLUDE_DIR NAMES tsl gsl catch.hpp)
+find_package(doctest CONFIG REQUIRED)
+find_path(VCPKG_INCLUDE_DIR NAMES tsl gsl)
 
 include_directories(AFTER ${VCPKG_INCLUDE_DIR})
 
