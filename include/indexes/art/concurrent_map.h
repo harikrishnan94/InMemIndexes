@@ -565,7 +565,7 @@ private:
         }
       }
 
-      this->num_children = load_aq(node->num_children);
+      store_rs(this->num_children, load_aq(node->num_children));
 
       ART_DEBUG_ASSERT(this->equals(node));
     }
@@ -652,7 +652,7 @@ private:
         }
       }
 
-      this->num_children = src_num_children;
+      store_rs(this->num_children, src_num_children);
 
       ART_DEBUG_ASSERT(this->equals(node));
     }
@@ -669,15 +669,15 @@ private:
       ART_DEBUG_ASSERT(pos < MAX_CHILDREN);
 
       concurrent_map::store_rs(children[pos], node);
-      concurrent_map::store_rs(keys[ind], static_cast<std::uint8_t>(pos + 1));
-      concurrent_map::store_rs(this->num_children,
-                               static_cast<std::int16_t>(num_children + 1));
+      concurrent_map::store_rs(keys[ind], pos + 1);
+      concurrent_map::store_rs(this->num_children, num_children + 1);
 
       return true;
     }
 
     node_t *find(std::uint8_t ind) const {
-      return load_aq(keys[ind]) ? load_aq(children[keys[ind] - 1]) : nullptr;
+      auto pos = load_aq(keys[ind]);
+      return pos ? load_aq(children[pos - 1]) : nullptr;
     }
 
     node_t *update(node_t *new_child, std::uint8_t ind) {
@@ -722,7 +722,7 @@ private:
         }
       }
 
-      this->num_children = load_aq(node->num_children);
+      store_rs(this->num_children, load_aq(node->num_children));
 
       ART_DEBUG_ASSERT(this->equals(node));
     }
@@ -732,9 +732,8 @@ private:
       ART_DEBUG_ASSERT(this->num_children < MAX_CHILDREN);
 
       concurrent_map::store_rs(children[ind], node);
-      concurrent_map::store_rs(
-          this->num_children,
-          static_cast<std::int16_t>(load_aq(this->num_children) + 1));
+      concurrent_map::store_rs(this->num_children,
+                               load_aq(this->num_children) + 1);
       return true;
     }
 
@@ -871,6 +870,12 @@ private:
     }
 
     void shrink_node(node_snapshot_t &node, node_snapshot_t &parent) {
+      auto free_node = [&](auto &nodelock) {
+        node->mark_as_deleted();
+        nodelock.unlock();
+        map.m_gc.retire_in_new_epoch(node_t::free, node.node);
+      };
+
       if (auto nodelock = node.lock()) {
         if (node->size()) {
           node_t *replacement = node->shrink();
@@ -884,9 +889,7 @@ private:
           if (!replacement->is_deleted()) {
             if (auto nodelock = node.lock()) {
               if (update_parent(replacement, parent)) {
-                node->mark_as_deleted();
-                nodelock.unlock();
-                map.m_gc.retire_in_new_epoch(node_t::free, node.node);
+                free_node(nodelock);
                 return;
               }
             }
@@ -899,16 +902,12 @@ private:
           if (parent) {
             if (auto lock = parent.lock()) {
               parent->remove(node->key);
-              node->mark_as_deleted();
-              nodelock.unlock();
-              map.m_gc.retire_in_new_epoch(node_t::free, node.node);
+              free_node(nodelock);
             }
           } else {
             if (auto lock = root_snapshot.lock_root(map)) {
               map.root = nullptr;
-              node->mark_as_deleted();
-              nodelock.unlock();
-              map.m_gc.retire_in_new_epoch(node_t::free, node.node);
+              free_node(nodelock);
             }
           }
         }
