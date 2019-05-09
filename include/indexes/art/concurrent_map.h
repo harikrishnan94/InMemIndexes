@@ -787,7 +787,7 @@ private:
     LockType lock() {
       LockType lock{node->m};
 
-      if (load_aq(node->version) != version) {
+      if (load_rx(node->version) != version) {
         lock.unlock();
       }
 
@@ -797,7 +797,7 @@ private:
     LockType lock_root(concurrent_map &map) {
       LockType lock{*map.root_mtx};
 
-      if (node != load_aq(map.root)) {
+      if (node != load_rx(map.root)) {
         lock.unlock();
       }
 
