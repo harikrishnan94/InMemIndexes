@@ -27,8 +27,17 @@ private:
   using bytea = const std::uint8_t *_RESTRICT;
   using version_t = std::uint64_t;
 
+  template <typename T> static inline T load_rx(const std::atomic<T> &val) {
+    return val.load(std::memory_order_relaxed);
+  }
+
   template <typename T> static inline T load_aq(const std::atomic<T> &val) {
     return val.load(std::memory_order_acquire);
+  }
+
+  template <typename T, typename U>
+  static inline void store_rx(std::atomic<T> &val, U &&newval) {
+    val.store(std::forward<T>(newval), std::memory_order_relaxed);
   }
 
   template <typename T, typename U>
@@ -43,7 +52,7 @@ private:
 
   template <typename T, typename U>
   static inline T xchg_rs(std::atomic<T> &val, U &&newval) {
-    auto old = val.load(std::memory_order_relaxed);
+    auto old = load_rx(val);
 
     store_rs(val, newval);
     return old;
@@ -1211,7 +1220,9 @@ public:
     auto &&old = insert<UpdateOp::UOP_Insert>(key, value);
 
     if (!old) {
-      count[utils::ThreadLocal::ThreadID()].num_inserts++;
+      std::atomic<std::size_t> &num_inserts =
+          count[utils::ThreadLocal::ThreadID()].num_inserts;
+      store_rx(num_inserts, load_rx(num_inserts) + 1);
     }
 
     return !old;
@@ -1221,7 +1232,9 @@ public:
     auto &&old = insert<UpdateOp::UOP_Upsert>(key, value);
 
     if (!old) {
-      count[utils::ThreadLocal::ThreadID()].num_inserts++;
+      std::atomic<std::size_t> &num_inserts =
+          count[utils::ThreadLocal::ThreadID()].num_inserts;
+      store_rx(num_inserts, load_rx(num_inserts) + 1);
     }
 
     return old;
@@ -1235,7 +1248,9 @@ public:
     auto &&old = erase(key);
 
     if (old) {
-      count[utils::ThreadLocal::ThreadID()].num_deletes++;
+      std::atomic<std::size_t> &num_deletes =
+          count[utils::ThreadLocal::ThreadID()].num_deletes;
+      store_rx(num_deletes, load_rx(num_deletes) + 1);
     }
 
     return old;
@@ -1245,7 +1260,7 @@ public:
     std::size_t size = 0;
 
     for (int i = 0, n = utils::ThreadLocal::MAX_THREADS; i < n; i++) {
-      size += count[i].num_inserts - count[i].num_deletes;
+      size += load_rx(count[i].num_inserts) - load_rx(count[i].num_deletes);
     }
 
     return size;
