@@ -22,7 +22,7 @@ private:
   static constexpr int KEYTYPE_SIZE = sizeof(key_type);
   static constexpr int NUM_BITS = 8;
   static constexpr int MAX_CHILDREN = 1 << NUM_BITS;
-  static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * __CHAR_BIT__) / NUM_BITS;
+  static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * CHAR_BIT) / NUM_BITS;
 
   using bytea = const std::uint8_t *_RESTRICT;
   using version_t = std::uint64_t;
@@ -37,16 +37,11 @@ private:
 
   template <typename T, typename U>
   static inline void store_rx(std::atomic<T> &val, U &&newval) {
-    val.store(std::forward<T>(newval), std::memory_order_relaxed);
+    val.store(newval, std::memory_order_relaxed);
   }
 
   template <typename T, typename U>
   static inline void store_rs(std::atomic<T> &val, U &&newval) {
-    val.store(std::forward<T>(newval), std::memory_order_release);
-  }
-
-  template <typename T>
-  static inline void store_rs(std::atomic<T> &val, const T &newval) {
     val.store(newval, std::memory_order_release);
   }
 
@@ -616,7 +611,7 @@ private:
     }
 
     inline int get_free_pos() {
-      constexpr int UINT64_BITS = sizeof(uint64_t) * __CHAR_BIT__;
+      constexpr int UINT64_BITS = sizeof(uint64_t) * CHAR_BIT;
       constexpr std::uint64_t MASK = static_cast<std::uint64_t>(-1)
                                      << MAX_CHILDREN;
       int ind = utils::leading_zeroes(~(freemap | MASK));

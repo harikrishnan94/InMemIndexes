@@ -86,7 +86,7 @@
     std::fill(buf, buf + sizeof(buf), '\0');                                   \
                                                                                \
     for (int i = sizeof(key_type) - 1, j = 0; i >= 0; i--) {                   \
-      uint8_t b = (k >> (i * __CHAR_BIT__)) & 0xFF;                            \
+      uint8_t b = (k >> (i * CHAR_BIT)) & 0xFF;                                \
                                                                                \
       if (!b && !print_zero) {                                                 \
         continue;                                                              \

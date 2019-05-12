@@ -15,7 +15,7 @@ private:
   static constexpr int KEYTYPE_SIZE = sizeof(key_type);
   static constexpr int NUM_BITS = 8;
   static constexpr int MAX_CHILDREN = 1 << NUM_BITS;
-  static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * __CHAR_BIT__) / NUM_BITS;
+  static constexpr int MAX_DEPTH = (KEYTYPE_SIZE * CHAR_BIT) / NUM_BITS;
 
   using bytea = const uint8_t *_RESTRICT;
 
@@ -55,7 +55,7 @@ private:
     static constexpr key_type extract_common_prefix(key_type key, int lcpl) {
       key_type ret = 0;
       auto keyvec = reinterpret_cast<bytea>(&key);
-      auto retvec = reinterpret_cast<uint8_t *__restrict__>(&ret);
+      auto retvec = reinterpret_cast<uint8_t * _RESTRICT>(&ret);
       std::copy(keyvec, keyvec + lcpl, retvec);
 
       return ret;
@@ -454,7 +454,7 @@ private:
     }
 
     inline int get_free_pos() {
-      constexpr int UINT64_BITS = sizeof(uint64_t) * __CHAR_BIT__;
+      constexpr int UINT64_BITS = sizeof(uint64_t) * CHAR_BIT;
       constexpr std::uint64_t MASK = static_cast<std::uint64_t>(-1)
                                      << MAX_CHILDREN;
       int ind = utils::leading_zeroes(~(freemap | MASK));

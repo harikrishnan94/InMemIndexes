@@ -2,6 +2,56 @@
 
 #include <inttypes.h>
 
+#if defined(_WIN32) && defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#pragma intrinsic(_BitScanReverse64)
+#pragma intrinsic(_BitScanReverse)
+
+static inline int __builtin_ctz(uint32_t x) {
+  unsigned long ret;
+  _BitScanForward(&ret, x);
+  return (int)ret;
+}
+
+static inline int __builtin_ctzll(unsigned long long x) {
+  unsigned long ret;
+  _BitScanForward64(&ret, x);
+  return (int)ret;
+}
+
+static inline int __builtin_ctzl(unsigned long x) {
+  return sizeof(x) == 8 ? __builtin_ctzll(x) : __builtin_ctz((uint32_t)x);
+}
+
+static inline int __builtin_clz(uint32_t x) {
+  unsigned long ret;
+  _BitScanReverse(&ret, x);
+  return (int)(31 ^ ret);
+  // return (int)__lzcnt(x);
+}
+
+static inline int __builtin_clzll(unsigned long long x) {
+  unsigned long ret;
+  _BitScanReverse64(&ret, x);
+  return (int)(63 ^ ret);
+  // return (int)__lzcnt64(x);
+}
+
+static inline int __builtin_clzl(unsigned long x) {
+  return sizeof(x) == 8 ? __builtin_clzll(x) : __builtin_clz((uint32_t)x);
+}
+
+#ifdef __cplusplus
+static inline int __builtin_ctzl(unsigned long long x) {
+  return __builtin_ctzll(x);
+}
+
+static inline int __builtin_clzl(unsigned long long x) {
+  return __builtin_clzll(x);
+}
+#endif
+#endif
+
 #if defined(__APPLE__) || defined(__linux__)
 #define _RESTRICT __restrict__
 #endif
@@ -10,33 +60,6 @@
 #endif
 
 namespace indexes::utils {
-static constexpr int leading_zeroes(uint64_t val) {
-#if defined(__linux__) || defined(__APPLE__)
-#define leading_zeroes_impl(x) __builtin_clzl(x)
-#endif /* __linux__ */
-
-#ifdef _WIN32
-#include <intrin.h>
-#define leading_zeroes_impl(x) __lzcnt64(x)
-#endif /* _WIN32 */
-
-  return leading_zeroes_impl(val);
-
-#undef leading_zeroes_impl
-}
-
-static constexpr int leading_zeroes(uint32_t val) {
-#if defined(__linux__) || defined(__APPLE__)
-#define leading_zeroes_impl(x) __builtin_clz(x)
-#endif /* __linux__ */
-
-#ifdef _WIN32
-#include <intrin.h>
-#define leading_zeroes_impl(x) __lzcnt(x)
-#endif /* _WIN32 */
-
-  return leading_zeroes_impl(val);
-
-#undef leading_zeroes_impl
-}
+static inline int leading_zeroes(uint64_t val) { return __builtin_clzl(val); }
+static inline int leading_zeroes(uint32_t val) { return __builtin_clz(val); }
 } // namespace indexes::utils
