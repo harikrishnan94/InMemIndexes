@@ -11,7 +11,7 @@ set(TEST_SRC_PATH "${PROJECT_PATH}/test")
 set(SRC
     "${SRC_UTILS_PATH}/Mutex.cpp"
     "${SRC_UTILS_PATH}/ParkingLot.cpp"
-    "${SRC_UTILS_PATH}/ThreadLocal.cpp"
+    "${SRC_UTILS_PATH}/ThreadRegistry.cpp"
     "${SRC_UTILS_PATH}/TraceLog.cpp")
 
 # Set benchmark source files.

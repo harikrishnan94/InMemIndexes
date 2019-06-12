@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ParkingLot.h"
-#include "ThreadLocal.h"
+#include "ThreadRegistry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -71,14 +71,14 @@ private:
 
     static LockWord get_contented_word() {
       if constexpr (EnableDeadlockDetection)
-        return ThreadLocal::ThreadID() | M_CONTENDED_MASK;
+        return ThreadRegistry::ThreadID() | M_CONTENDED_MASK;
       else
         return LockState::LS_CONTENTED;
     }
 
     static LockWord get_lock_word() {
       if constexpr (EnableDeadlockDetection)
-        return ThreadLocal::ThreadID();
+        return ThreadRegistry::ThreadID();
       else
         return LockState::LS_LOCKED;
     }
@@ -93,7 +93,7 @@ private:
       auto detect_deadlock = [&]() {
         const DeadlockSafeMutex *waiting_on = this;
 
-        waiters[ThreadLocal::ThreadID()] = waiting_on;
+        waiters[ThreadRegistry::ThreadID()] = waiting_on;
 
         while (true) {
           auto lock_holder = waiting_on->word.load().as_uncontented_word();
@@ -161,12 +161,12 @@ private:
 
   void announce_wait() const {
     if constexpr (EnableDeadlockDetection)
-      detail::thread_waiting_on[ThreadLocal::ThreadID()] = this;
+      detail::thread_waiting_on[ThreadRegistry::ThreadID()] = this;
   }
 
   void denounce_wait() const {
     if constexpr (EnableDeadlockDetection)
-      detail::thread_waiting_on[ThreadLocal::ThreadID()] = nullptr;
+      detail::thread_waiting_on[ThreadRegistry::ThreadID()] = nullptr;
   }
 
   bool is_lock_contented() const { return word.load().is_lock_contented(); }

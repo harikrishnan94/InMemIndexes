@@ -13,7 +13,7 @@
 TEST_SUITE_BEGIN("concurrent_art");
 
 TEST_CASE("ConcurrentARTBasic") {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
   indexes::art::concurrent_map<uint64_t, indexes::art::art_traits_debug> map;
 
   int num_keys = 1000 * 1000;
@@ -49,7 +49,7 @@ TEST_CASE("ConcurrentARTBasic") {
     REQUIRE(*map.Delete(kv.first) == kv.second);
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 TEST_CASE("ConcurrentARTMixed") {

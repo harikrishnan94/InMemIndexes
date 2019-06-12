@@ -1,4 +1,4 @@
-#include "indexes/utils/ThreadLocal.h"
+#include "indexes/utils/ThreadRegistry.h"
 
 #include <doctest/doctest.h>
 #include <gsl/span>
@@ -21,7 +21,7 @@ std::vector<int64_t> generateUniqueValues(int num_threads, int perthread_count,
                                           ConcurrentMapTestWorkload workload);
 
 template <typename MapType> void MixedMapTest() {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
 
   MapType map;
 
@@ -96,37 +96,37 @@ template <typename MapType> void MixedMapTest() {
 
   REQUIRE(map.size() == 0);
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 template <typename MapType>
 static void lookup_worker(MapType &map, gsl::span<int64_t> vals) {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
 
   for (auto val : vals) {
     map.Search(val);
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 template <typename MapType>
 static void insert_worker(MapType &map, gsl::span<int64_t> vals) {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
 
   for (auto val : vals) {
     REQUIRE(map.Insert(val, val) == true);
     REQUIRE(*map.Search(val) == val);
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 enum class OpType { INSERT, DELETE, DELETE_AND_INSERT };
 
 template <typename MapType>
 static void delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op) {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
 
   for (auto val : vals) {
     switch (op) {
@@ -145,7 +145,7 @@ static void delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op) {
     }
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 template <typename MapType>
@@ -156,7 +156,7 @@ void ConcurrentMapTest(ConcurrentMapTestWorkload workload) {
   std::vector<int64_t> vals =
       generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, workload);
 
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
 
   auto run_test = [&](OpType op) {
     std::vector<std::thread> workers;
@@ -214,5 +214,5 @@ void ConcurrentMapTest(ConcurrentMapTestWorkload workload) {
     REQUIRE(map.size() == 0);
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }

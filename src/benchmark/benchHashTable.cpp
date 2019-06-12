@@ -19,7 +19,7 @@ static uint64_t *get_rand_values() {
 }
 
 static void BM_HashTableInsert(benchmark::State &state) {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
   indexes::hashtable::concurrent_map<uint64_t, uint64_t, absl::Hash<uint64_t>>
       map;
   uint64_t ind = 0;
@@ -37,11 +37,11 @@ static void BM_HashTableInsert(benchmark::State &state) {
       ind = 0;
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 static void BM_HashTableSearch(benchmark::State &state) {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
   uint64_t *keys = get_rand_values();
   uint64_t ind = 0;
   uint64_t num_unique_keys = static_cast<uint64_t>(state.range(0));
@@ -67,7 +67,7 @@ static void BM_HashTableSearch(benchmark::State &state) {
       ind = 0;
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 BENCHMARK(BM_HashTableInsert)->RangeMultiplier(4)->Range(1024, MAXSIZE);

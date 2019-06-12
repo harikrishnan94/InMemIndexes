@@ -13,7 +13,7 @@
 TEST_SUITE_BEGIN("hashtable");
 
 TEST_CASE("HashMapBasic") {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
   indexes::hashtable::concurrent_map<int, int, absl::Hash<int>,
                                      indexes::hashtable::hashtable_traits_debug>
       map;
@@ -47,11 +47,11 @@ TEST_CASE("HashMapBasic") {
     REQUIRE(*map.Delete(kv.first) == kv.second);
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 TEST_CASE("HashMapString") {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
   indexes::hashtable::concurrent_map<std::string, int, absl::Hash<std::string>,
                                      indexes::hashtable::hashtable_traits_debug>
       map;
@@ -85,7 +85,7 @@ TEST_CASE("HashMapString") {
     REQUIRE(*map.Delete(kv.first) == kv.second);
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 TEST_CASE("HashMapMixed") {

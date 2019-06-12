@@ -147,7 +147,7 @@ private:
     HashTable(size_t inital_num_buckets)
         : num_buckets(next_pow_2(inital_num_buckets)),
           stats(std::make_unique<HashTablePerThreadStats[]>(
-              utils::ThreadLocal::MAX_THREADS)),
+              utils::ThreadRegistry::MAX_THREADS)),
           mem(std::make_unique<uint8_t[]>(num_buckets * sizeof(HashBucket))),
           link(std::make_unique<Link[]>(num_buckets)),
           buckets(reinterpret_cast<HashBucket *>(mem.get())) {
@@ -176,14 +176,14 @@ private:
 
     void increment_num_values() {
       std::atomic<size_t> &num_values =
-          stats[utils::ThreadLocal::ThreadID()].num_values;
+          stats[utils::ThreadRegistry::ThreadID()].num_values;
 
       num_values.store(num_values.load() + 1, std::memory_order_relaxed);
     }
 
     void increment_num_tomb_stones() {
       std::atomic<size_t> &num_tomb_stones =
-          stats[utils::ThreadLocal::ThreadID()].num_tomb_stones;
+          stats[utils::ThreadRegistry::ThreadID()].num_tomb_stones;
 
       num_tomb_stones.store(num_tomb_stones.load() + 1,
                             std::memory_order_relaxed);
@@ -193,7 +193,7 @@ private:
       size_t num_values = 0;
       size_t num_tomb_stones = 0;
 
-      for (int i = 0; i < utils::ThreadLocal::MAX_THREADS; i++) {
+      for (int i = 0; i < utils::ThreadRegistry::MAX_THREADS; i++) {
         num_values += stats[i].num_values.load(std::memory_order_relaxed);
         num_tomb_stones +=
             stats[i].num_tomb_stones.load(std::memory_order_relaxed);

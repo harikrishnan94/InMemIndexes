@@ -6,7 +6,7 @@
 #include "common.h"
 #include "indexes/utils/EpochManager.h"
 #include "indexes/utils/Mutex.h"
-#include "indexes/utils/ThreadLocal.h"
+#include "indexes/utils/ThreadRegistry.h"
 
 #include <atomic>
 #include <memory>
@@ -1165,7 +1165,7 @@ public:
   concurrent_map()
       : root_mtx(std::make_unique<utils::Mutex>()), root(nullptr),
         count(std::make_unique<values_count_t[]>(
-            utils::ThreadLocal::MAX_THREADS)) {}
+            utils::ThreadRegistry::MAX_THREADS)) {}
 
   concurrent_map(const concurrent_map &) = delete;
 
@@ -1215,7 +1215,7 @@ public:
 
     if (!old) {
       std::atomic<std::size_t> &num_inserts =
-          count[utils::ThreadLocal::ThreadID()].num_inserts;
+          count[utils::ThreadRegistry::ThreadID()].num_inserts;
       store_rx(num_inserts, load_rx(num_inserts) + 1);
     }
 
@@ -1227,7 +1227,7 @@ public:
 
     if (!old) {
       std::atomic<std::size_t> &num_inserts =
-          count[utils::ThreadLocal::ThreadID()].num_inserts;
+          count[utils::ThreadRegistry::ThreadID()].num_inserts;
       store_rx(num_inserts, load_rx(num_inserts) + 1);
     }
 
@@ -1243,7 +1243,7 @@ public:
 
     if (old) {
       std::atomic<std::size_t> &num_deletes =
-          count[utils::ThreadLocal::ThreadID()].num_deletes;
+          count[utils::ThreadRegistry::ThreadID()].num_deletes;
       store_rx(num_deletes, load_rx(num_deletes) + 1);
     }
 
@@ -1253,7 +1253,7 @@ public:
   std::size_t size() const {
     std::size_t size = 0;
 
-    for (int i = 0, n = utils::ThreadLocal::MAX_THREADS; i < n; i++) {
+    for (int i = 0, n = utils::ThreadRegistry::MAX_THREADS; i < n; i++) {
       size += load_rx(count[i].num_inserts) - load_rx(count[i].num_deletes);
     }
 

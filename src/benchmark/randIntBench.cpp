@@ -132,7 +132,7 @@ static auto insert_values(MapType &map, int64_t rowcount, int num_threads) {
 
   for (int i = 0; i < num_threads; i++) {
     workers.emplace_back([&]() {
-      indexes::utils::ThreadLocal::RegisterThread();
+      indexes::utils::ThreadRegistry::RegisterThread();
 
       do {
         auto start = next_batch.fetch_add(BATCH);
@@ -146,7 +146,7 @@ static auto insert_values(MapType &map, int64_t rowcount, int num_threads) {
         }
       } while (next_batch < rowcount);
 
-      indexes::utils::ThreadLocal::UnregisterThread();
+      indexes::utils::ThreadRegistry::UnregisterThread();
     });
   }
 
@@ -167,7 +167,7 @@ static void worker(std::promise<uint64_t> result, std::string dist,
                    MapType &map, int64_t rowcount,
                    std::atomic<int64_t> &opercount, int read_p, int insert_p,
                    int delete_p, int update_p) {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
 
   enum Oper { READ, INSERT, DELETE, UPDATE };
 
@@ -247,16 +247,16 @@ static void worker(std::promise<uint64_t> result, std::string dist,
 
   result.set_value(num_successful_ops);
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 template <typename MapType>
 static void map_reserve(MapType &map, const BMArgs &args) {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
 
   map.reserve(args.rowcount);
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 template <typename MapType> static void do_benchmark(const BMArgs &args) {

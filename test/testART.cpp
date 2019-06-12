@@ -11,7 +11,7 @@
 TEST_SUITE_BEGIN("art");
 
 TEST_CASE("ARTBasic") {
-  indexes::utils::ThreadLocal::RegisterThread();
+  indexes::utils::ThreadRegistry::RegisterThread();
   indexes::art::map<int, indexes::art::art_traits_debug> map;
 
   int num_keys = 1000 * 1000;
@@ -47,7 +47,7 @@ TEST_CASE("ARTBasic") {
     REQUIRE(*map.Delete(kv.first) == kv.second);
   }
 
-  indexes::utils::ThreadLocal::UnregisterThread();
+  indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 TEST_CASE("ARTMixed") {

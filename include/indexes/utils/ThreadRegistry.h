@@ -1,7 +1,7 @@
 #pragma once
 
 namespace indexes::utils {
-class ThreadLocal {
+class ThreadRegistry {
 public:
   // Maximum # active threads supported by EpochGC.
   static constexpr int MAX_THREADS = 1 << 16;

@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "ThreadLocal.h"
+#include "ThreadRegistry.h"
 
 #include <atomic>
 #include <memory>
@@ -72,7 +72,7 @@ public:
       evt = allocateEventFromNewPage(); // Double-checked locking is performed
                                         // inside here.
 
-    evt->tid = ThreadLocal::ThreadID();
+    evt->tid = ThreadRegistry::ThreadID();
     evt->fmt = fmt;
     evt->param1 = param1;
     evt->param2 = param2;

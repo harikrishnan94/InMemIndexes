@@ -1,7 +1,6 @@
 #pragma once
 
-#include "ThreadLocal.h"
-#include "TypeSafeInt.h"
+#include "ThreadRegistry.h"
 
 #include <algorithm>
 #include <array>
@@ -42,13 +41,13 @@ public:
   // enter_epoch guarantees that all shared objects, accessed by the calling
   // thread, after enter_epoch is called are safe.
   inline void enter_epoch() {
-    m_local_epoch[ThreadLocal::ThreadID()].epoch = now();
+    m_local_epoch[ThreadRegistry::ThreadID()].epoch = now();
   }
 
   // exit_epoch marks quiescent state of the calling thread.
   // Enables reclaimation of objects retired before calling thread's epoch.
   inline void exit_epoch() {
-    m_local_epoch[ThreadLocal::ThreadID()].epoch.store(
+    m_local_epoch[ThreadRegistry::ThreadID()].epoch.store(
         QUIESCENT_STATE, std::memory_order_release);
   }
 
@@ -57,7 +56,7 @@ public:
 
   // Returns current threads epoch
   inline epoch_t my_epoch() {
-    return m_local_epoch[ThreadLocal::ThreadID()].epoch.load(
+    return m_local_epoch[ThreadRegistry::ThreadID()].epoch.load(
         std::memory_order_relaxed);
   }
 
@@ -99,7 +98,7 @@ public:
   // A long running thread using an epoch could prevent
   // reclaimation of objects visible to that thread.
   size_t do_reclaim() {
-    return reclaim_in_retire_list(m_retire_list[ThreadLocal::ThreadID()],
+    return reclaim_in_retire_list(m_retire_list[ThreadRegistry::ThreadID()],
                                   get_min_used_epoch());
   }
 
@@ -126,9 +125,9 @@ public:
 
   EpochManager()
       : m_reclaimation_threshold{ReclamationThreshold}, m_global_epoch{0},
-        m_local_epoch(ThreadLocal::MAX_THREADS),
-        m_retire_list(ThreadLocal::MAX_THREADS) {
-    for (int i = 0; i < ThreadLocal::MAX_THREADS; i++)
+        m_local_epoch(ThreadRegistry::MAX_THREADS),
+        m_retire_list(ThreadRegistry::MAX_THREADS) {
+    for (int i = 0; i < ThreadRegistry::MAX_THREADS; i++)
       m_local_epoch[i].epoch.store(QUIESCENT_STATE, std::memory_order_relaxed);
   }
 
@@ -184,7 +183,7 @@ private:
   epoch_t get_min_used_epoch() {
     return std::min_element(std::begin(m_local_epoch),
                             std::begin(m_local_epoch) +
-                                ThreadLocal::MaxThreadID() + 1,
+                                ThreadRegistry::MaxThreadID() + 1,
                             [](const auto &a, const auto &b) {
                               return a.epoch.load() < b.epoch.load();
                             })
@@ -193,7 +192,7 @@ private:
 
   void retire(std::function<void(ReclaimedPtrType object)> reclaimer,
               gsl::span<ReclaimedPtrType> objects, epoch_t retired_epoch) {
-    auto &retire_list = m_retire_list[ThreadLocal::ThreadID()];
+    auto &retire_list = m_retire_list[ThreadRegistry::ThreadID()];
 
     for (auto object : objects)
       retire_list.emplace_back(object, reclaimer, retired_epoch);
