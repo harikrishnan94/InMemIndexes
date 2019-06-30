@@ -312,7 +312,7 @@ template <typename MapType> static void do_benchmark(const BMArgs &args) {
     }
   }
 
-  // map.reclaim_all();
+  map.reclaim_all();
 }
 
 static void do_benchmark(const BMArgs &args) {

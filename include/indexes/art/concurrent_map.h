@@ -1283,6 +1283,8 @@ public:
     // No-op
   }
 
+  inline void reclaim_all() { m_gc.reclaim_all(); }
+
   ART_DUMP_METHODS
 };
 } // namespace indexes::art

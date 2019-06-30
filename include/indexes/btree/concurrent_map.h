@@ -914,7 +914,7 @@ private:
           std::conditional_t<FillSnapshotVector, NodeSnapshotVector, DummyType>,
       typename NodeSnaphotType =
           std::conditional_t<FillSnapshotVector, DummyType, NodeSnapshot>>
-  OpResult traverse(const GetChild &get_children, SnapshotVectorType &nss_vec,
+  OpResult traverse(const GetChild &get_children, SnapshotVectorType &snapshots,
                     NodeSnaphotType &leaf_snapshot) const {
     node_t *parent = nullptr;
     node_t *current = nullptr;
@@ -922,13 +922,13 @@ private:
     nodestate_t current_state = {};
 
     if constexpr (FillSnapshotVector)
-      nss_vec.clear();
+      snapshots.clear();
 
     if (lock_node_or_restart<UseOptimisticLocking>(nullptr, parent_state))
       return OpResult::STALE_SNAPSHOT;
 
     if constexpr (FillSnapshotVector)
-      nss_vec.push_back({nullptr, parent_state});
+      snapshots.push_back({nullptr, parent_state});
 
     for (current = m_root; current && current->isInner();) {
       if (lock_node_or_restart<UseOptimisticLocking>(current, current_state) ||
@@ -937,7 +937,7 @@ private:
       }
 
       if constexpr (FillSnapshotVector)
-        nss_vec.push_back({current, current_state});
+        snapshots.push_back({current, current_state});
 
       parent = current;
       parent_state = current_state;
@@ -955,7 +955,7 @@ private:
 
     if (current) {
       if constexpr (FillSnapshotVector)
-        nss_vec.push_back({current, current_state});
+        snapshots.push_back({current, current_state});
       else
         leaf_snapshot = {current, current_state};
     }
@@ -968,7 +968,7 @@ private:
                 FillSnapshotVector, NodeSnapshotVector, DummyType>,
             typename NodeSnaphotType =
                 std::conditional_t<FillSnapshotVector, DummyType, NodeSnapshot>>
-  bool traverse_to_leaf(GetChild &&get_child, SnapshotVectorType &nss_vec,
+  bool traverse_to_leaf(GetChild &&get_child, SnapshotVectorType &snapshots,
                         NodeSnaphotType &leaf_snapshot) const {
     int restart_count = 0;
     NodeSnapshot parent_snapshot;
@@ -977,14 +977,14 @@ private:
 
     do {
       opt_traversal_res = traverse<OPTIMISTIC_LOCKING, FillSnapshotVector>(
-          get_child, nss_vec, leaf_snapshot);
+          get_child, snapshots, leaf_snapshot);
       restart_count++;
     } while (opt_traversal_res != OpResult::SUCCESS &&
              restart_count < MaxRestarts);
 
     if (opt_traversal_res != OpResult::SUCCESS) {
       auto res = traverse<PESSIMISTIC_LOCKING, FillSnapshotVector>(
-          get_child, nss_vec, leaf_snapshot);
+          get_child, snapshots, leaf_snapshot);
 
       BTREE_DEBUG_ASSERT(res == OpResult::SUCCESS);
       BTREE_DEBUG_ONLY(res);
@@ -993,21 +993,22 @@ private:
     return opt_traversal_res != OpResult::SUCCESS;
   }
 
-  bool get_leaf_containing(const Key &key, NodeSnapshotVector &nss_vec) const {
+  bool get_leaf_containing(const Key &key,
+                           NodeSnapshotVector &snapshots) const {
     DummyType dummy;
 
     bool is_leaf_locked = traverse_to_leaf<FILL_SNAPSHOT_VECTOR>(
         [&key](node_t *current) {
           return ASINNER(current)->get_child_for_key(key);
         },
-        nss_vec, dummy);
+        snapshots, dummy);
 
-    BTREE_DEBUG_ASSERT(nss_vec.size() > 0);
+    BTREE_DEBUG_ASSERT(snapshots.size() > 0);
 
-    if (nss_vec.size() > 1)
-      BTREE_DEBUG_ASSERT(nss_vec.back().node->isLeaf());
+    if (snapshots.size() > 1)
+      BTREE_DEBUG_ASSERT(snapshots.back().node->isLeaf());
 
-    return nss_vec.size() > 1 && is_leaf_locked;
+    return snapshots.size() > 1 && is_leaf_locked;
   }
 
   NodeSnapshot get_leaf_containing(const Key &key) const {
@@ -1089,15 +1090,15 @@ private:
   }
 
   template <typename Update>
-  OpResult replace_subtree_on_version_match(const NodeSnapshotVector &nss_vec,
-                                            int from_ss, Update &&update) {
+  OpResult replace_subtree_on_version_match(const NodeSnapshotVector &snapshots,
+                                            int from_node, Update &&update) {
     static thread_local std::vector<node_t *> deleted_nodes;
 
     auto res = [&]() {
       std::vector<std::unique_lock<indexes::utils::Mutex>> locks;
-      for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size());
-           node_ss++) {
-        const NodeSnapshot &snapshot = nss_vec[node_ss];
+      for (int node_idx = from_node;
+           node_idx < static_cast<int>(snapshots.size()); node_idx++) {
+        const NodeSnapshot &snapshot = snapshots[node_idx];
 
         locks.emplace_back(snapshot.node->mutex);
 
@@ -1106,9 +1107,9 @@ private:
       }
 
       if (update()) {
-        for (int node_ss = from_ss; node_ss < static_cast<int>(nss_vec.size());
-             node_ss++) {
-          const NodeSnapshot &snapshot = nss_vec[node_ss];
+        for (int node_idx = from_node;
+             node_idx < static_cast<int>(snapshots.size()); node_idx++) {
+          const NodeSnapshot &snapshot = snapshots[node_idx];
 
           snapshot.node->setState(
               snapshot.node->getState().set_deleted().increment_version());
@@ -1132,10 +1133,10 @@ private:
 
   template <typename Node>
   std::pair<OpResult, NodeSplitInfo>
-  split_node(int node_ss, const NodeSnapshotVector &nss_vec,
+  split_node(int node_idx, const NodeSnapshotVector &snapshots,
              NodeSplitInfo &prev_split_info) {
-    const NodeSnapshot &node_snapshot = nss_vec[node_ss];
-    const NodeSnapshot &parent_snapshot = nss_vec[node_ss - 1];
+    const NodeSnapshot &node_snapshot = snapshots[node_idx];
+    const NodeSnapshot &parent_snapshot = snapshots[node_idx - 1];
     Node *node = static_cast<Node *>(node_snapshot.node);
     inner_node_t *parent = static_cast<inner_node_t *>(parent_snapshot.node);
     NodeSplitInfo splitinfo;
@@ -1156,7 +1157,7 @@ private:
 
     BTREE_UPDATE_STAT_NODE_BASED(split);
 
-    auto res = replace_subtree_on_version_match(nss_vec, node_ss, [&]() {
+    auto res = replace_subtree_on_version_match(snapshots, node_idx, [&]() {
       if constexpr (Node::IsInner())
         insert_into_splitnode(splitinfo, prev_split_info);
 
@@ -1177,11 +1178,11 @@ private:
   }
 
   template <typename Node>
-  OpResult trim_node(int node_ss, const Key &key,
-                     const NodeSnapshotVector &nss_vec,
+  OpResult trim_node(int node_idx, const Key &key,
+                     const NodeSnapshotVector &snapshots,
                      NodeSplitInfo &prev_split_info) {
-    const NodeSnapshot &node_snapshot = nss_vec[node_ss];
-    const NodeSnapshot &parent_snapshot = nss_vec[node_ss - 1];
+    const NodeSnapshot &node_snapshot = snapshots[node_idx];
+    const NodeSnapshot &parent_snapshot = snapshots[node_idx - 1];
     Node *node = static_cast<Node *>(node_snapshot.node);
     inner_node_t *parent = static_cast<inner_node_t *>(parent_snapshot.node);
     Node *trimmed_node;
@@ -1202,7 +1203,7 @@ private:
 
     BTREE_UPDATE_STAT_NODE_BASED(trim);
 
-    return replace_subtree_on_version_match(nss_vec, node_ss, [&]() {
+    return replace_subtree_on_version_match(snapshots, node_idx, [&]() {
       if constexpr (Node::IsInner()) {
         reinterpret_cast<inner_node_t *>(trimmed_node)
             ->update_inner_for_split(prev_split_info);
@@ -1218,61 +1219,69 @@ private:
   }
 
   std::pair<OpResult, NodeSplitInfo>
-  handle_node_overflow(int node_ss, const Key &key,
-                       const NodeSnapshotVector &nss_vec,
+  handle_node_overflow(int node_idx, const Key &key,
+                       const NodeSnapshotVector &snapshots,
                        NodeSplitInfo &prev_split_info) {
-    node_t *node = nss_vec[node_ss].node;
+    node_t *node = snapshots[node_idx].node;
 
     if (node->canTrim()) {
       if (node->isLeaf())
-        return {trim_node<leaf_node_t>(node_ss, key, nss_vec, prev_split_info),
-                {}};
+        return {
+            trim_node<leaf_node_t>(node_idx, key, snapshots, prev_split_info),
+            {}};
       else
-        return {trim_node<inner_node_t>(node_ss, key, nss_vec, prev_split_info),
-                {}};
+        return {
+            trim_node<inner_node_t>(node_idx, key, snapshots, prev_split_info),
+            {}};
     } else {
       if (node->isLeaf())
-        return split_node<leaf_node_t>(node_ss, nss_vec, prev_split_info);
+        return split_node<leaf_node_t>(node_idx, snapshots, prev_split_info);
       else
-        return split_node<inner_node_t>(node_ss, nss_vec, prev_split_info);
+        return split_node<inner_node_t>(node_idx, snapshots, prev_split_info);
     }
   }
 
-  void handle_overflow(const NodeSnapshotVector &nss_vec, const Key &key) {
-    int node_ss = nss_vec.size() - 1;
+  void handle_overflow(const NodeSnapshotVector &snapshots, const Key &key) {
+    int node_idx = snapshots.size() - 1;
     NodeSplitInfo top_splitinfo{};
-    static thread_local std::vector<NodeSplitInfo> splitinfos;
+    static thread_local std::vector<NodeSplitInfo> failed_splitinfos;
 
-    splitinfos.clear();
+    failed_splitinfos.clear();
 
-    BTREE_DEBUG_ASSERT(nss_vec[node_ss].node &&
-                       nss_vec[node_ss].node->isLeaf());
+    auto free_failed_splits = []() {
+      // Delete allocated nodes
+      for (auto splitinfo : failed_splitinfos) {
+        if (splitinfo.left)
+          node_t::free(splitinfo.left);
 
-    while (node_ss > 0) {
-      auto res = handle_node_overflow(node_ss, key, nss_vec, top_splitinfo);
+        if (splitinfo.right)
+          node_t::free(splitinfo.right);
+      }
+    };
 
-      if (res.first == OpResult::STALE_SNAPSHOT ||
-          res.first == OpResult::SUCCESS) {
-        if (res.first != OpResult::SUCCESS) {
-          splitinfos.emplace_back(res.second);
+    BTREE_DEBUG_ASSERT(snapshots[node_idx].node &&
+                       snapshots[node_idx].node->isLeaf());
 
-          // Delete allocated nodes
-          for (auto splitinfo : splitinfos) {
-            if (splitinfo.left)
-              node_t::free(splitinfo.left);
+    while (node_idx > 0) {
+      auto res = handle_node_overflow(node_idx, key, snapshots, top_splitinfo);
 
-            if (splitinfo.right)
-              node_t::free(splitinfo.right);
-          }
-        }
+      switch (res.first) {
+      case OpResult::FAILURE:
+        top_splitinfo = res.second;
+        failed_splitinfos.emplace_back(res.second);
+        node_idx--;
+        break;
 
+      case OpResult::STALE_SNAPSHOT:
+        failed_splitinfos.emplace_back(res.second);
+        free_failed_splits();
+
+      case OpResult::SUCCESS:
         return;
       }
-
-      top_splitinfo = res.second;
-      splitinfos.emplace_back(res.second);
-      node_ss--;
     }
+
+    free_failed_splits();
 
     BTREE_DEBUG_ASSERT(false && "Shallnot come here");
   }
@@ -1280,11 +1289,11 @@ private:
   template <bool DoUpsert, typename OutputType = std::conditional_t<
                                DoUpsert, std::optional<Value>, bool>>
   inline std::pair<OpResult, OutputType>
-  insert_or_upsert_leaf(const NodeSnapshotVector &nss_vec, bool is_leaf_locked,
-                        const Key &key, const Value &val) {
+  insert_or_upsert_leaf(const NodeSnapshotVector &snapshots,
+                        bool is_leaf_locked, const Key &key, const Value &val) {
     InsertStatus status;
     std::optional<Value> oldval{};
-    NodeSnapshot leaf_snapshot = nss_vec.back();
+    NodeSnapshot leaf_snapshot = snapshots.back();
     leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
 
     if constexpr (!DoUpsert)
@@ -1312,7 +1321,7 @@ private:
     }
 
     if (status == InsertStatus::OVFLOW) {
-      handle_overflow(nss_vec, key);
+      handle_overflow(snapshots, key);
 
       return {OpResult::STALE_SNAPSHOT, {}};
     }
@@ -1340,18 +1349,18 @@ private:
 
   template <bool DoUpsert>
   auto insert_or_upsert(const Key &key, const Value &val) {
-    static thread_local NodeSnapshotVector nss_vec;
+    static thread_local NodeSnapshotVector snapshots;
 
-    nss_vec.clear();
+    snapshots.clear();
     ensure_root();
 
     while (true) {
       EpochGuard eg(this);
-      bool is_leaf_locked = get_leaf_containing(key, nss_vec);
+      bool is_leaf_locked = get_leaf_containing(key, snapshots);
 
-      BTREE_DEBUG_ASSERT(nss_vec.size() > 1);
+      BTREE_DEBUG_ASSERT(snapshots.size() > 1);
 
-      if (auto res = insert_or_upsert_leaf<DoUpsert>(nss_vec, is_leaf_locked,
+      if (auto res = insert_or_upsert_leaf<DoUpsert>(snapshots, is_leaf_locked,
                                                      key, val);
           res.first != OpResult::STALE_SNAPSHOT) {
         return res.second;
@@ -1379,13 +1388,13 @@ private:
   }
 
   template <typename Node>
-  void merge_node(int node_ss, const NodeSnapshotVector &nss_vec,
+  void merge_node(int node_idx, const NodeSnapshotVector &snapshots,
                   const Key &key) {
-    if (node_ss == 1)
+    if (node_idx == 1)
       return;
 
-    const NodeSnapshot &node_snapshot = nss_vec[node_ss];
-    const NodeSnapshot &parent_snapshot = nss_vec[node_ss - 1];
+    const NodeSnapshot &node_snapshot = snapshots[node_idx];
+    const NodeSnapshot &parent_snapshot = snapshots[node_idx - 1];
     Node *node = static_cast<Node *>(node_snapshot.node);
     inner_node_t *parent = static_cast<inner_node_t *>(parent_snapshot.node);
     std::optional<MergeInfo> mergeinfo = get_merge_info(node, parent, key);
@@ -1428,13 +1437,13 @@ private:
     }
 
     if (parent->isUnderfull())
-      merge_node<inner_node_t>(node_ss - 1, nss_vec, key);
+      merge_node<inner_node_t>(node_idx - 1, snapshots, key);
   }
 
   std::pair<OpResult, std::optional<Value>>
   delete_from_leaf(const Key &key, bool is_leaf_locked,
-                   NodeSnapshotVector &nss_vec) {
-    NodeSnapshot &leaf_snapshot = nss_vec.back();
+                   NodeSnapshotVector &snapshots) {
+    NodeSnapshot &leaf_snapshot = snapshots.back();
     leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
     std::pair<OpResult, std::optional<Value>> ret{};
 
@@ -1476,7 +1485,7 @@ private:
     }
 
     if (leaf->isUnderfull())
-      merge_node<leaf_node_t>(nss_vec.size() - 1, nss_vec, key);
+      merge_node<leaf_node_t>(snapshots.size() - 1, snapshots, key);
 
     return ret;
   }
@@ -1520,7 +1529,7 @@ private:
         }
 
         if (leaf && slots.empty()) {
-          if (leaf->highkey) {
+          if (leaf->lowkey) {
             key = std::addressof(leaf->lowkey.value());
             continue;
           } else {
@@ -1701,16 +1710,16 @@ public:
   }
 
   std::optional<Value> Delete(const Key &key) {
-    static thread_local NodeSnapshotVector nss_vec;
+    static thread_local NodeSnapshotVector snapshots;
 
-    nss_vec.clear();
+    snapshots.clear();
 
     while (true) {
       EpochGuard eg(this);
-      bool is_leaf_locked = get_leaf_containing(key, nss_vec);
+      bool is_leaf_locked = get_leaf_containing(key, snapshots);
 
-      if (nss_vec.size() > 1) {
-        if (auto res = delete_from_leaf(key, is_leaf_locked, nss_vec);
+      if (snapshots.size() > 1) {
+        if (auto res = delete_from_leaf(key, is_leaf_locked, snapshots);
             res.first != OpResult::STALE_SNAPSHOT) {
           return res.second;
         }
@@ -1813,7 +1822,7 @@ public:
     inline data_type &data() const { return get_pair()->second; }
 
     inline iterator_impl operator++() {
-      if (IType == IteratorType::FORWARD)
+      if constexpr (IType == IteratorType::FORWARD)
         increment();
       else
         decrement();
@@ -1824,7 +1833,7 @@ public:
     inline iterator_impl operator++(int) {
       auto copy = *this;
 
-      if (IType == IteratorType::FORWARD)
+      if constexpr (IType == IteratorType::FORWARD)
         increment();
       else
         decrement();
@@ -1833,7 +1842,7 @@ public:
     }
 
     inline iterator_impl operator--() {
-      if (IType == IteratorType::FORWARD)
+      if constexpr (IType == IteratorType::FORWARD)
         decrement();
       else
         increment();
@@ -1844,7 +1853,7 @@ public:
     inline iterator_impl operator--(int) {
       auto copy = *this;
 
-      if (IType == IteratorType::FORWARD)
+      if constexpr (IType == IteratorType::FORWARD)
         decrement();
       else
         increment();
@@ -1880,10 +1889,8 @@ public:
       if (leaf) {
         leaf->get_all_slots(slots);
 
-        if (is_snapshot_stale(leaf_snapshot))
-          continue;
-
-        break;
+        if (!is_snapshot_stale(leaf_snapshot))
+          break;
       }
     } while (leaf);
 
@@ -1913,10 +1920,8 @@ public:
       if (leaf) {
         leaf->get_all_slots(slots);
 
-        if (is_snapshot_stale(leaf_snapshot))
-          continue;
-
-        break;
+        if (!is_snapshot_stale(leaf_snapshot))
+          break;
       }
     } while (leaf);
 
@@ -1953,10 +1958,8 @@ public:
       if (leaf) {
         leaf->get_slots_greater_than(key, slots);
 
-        if (is_snapshot_stale(leaf_snapshot))
-          continue;
-
-        break;
+        if (!is_snapshot_stale(leaf_snapshot))
+          break;
       }
     } while (leaf);
 

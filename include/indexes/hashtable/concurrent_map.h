@@ -586,5 +586,7 @@ public:
   }
 
   bool empty() const { return size() == 0; }
+
+  inline void reclaim_all() { m_gc.reclaim_all(); }
 }; // namespace indexes::hashtable
 } // namespace indexes::hashtable
