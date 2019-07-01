@@ -1178,9 +1178,9 @@ private:
   }
 
   template <typename Node>
-  OpResult trim_node(int node_idx, const Key &key,
-                     const NodeSnapshotVector &snapshots,
-                     NodeSplitInfo &prev_split_info) {
+  std::pair<OpResult, NodeSplitInfo>
+  trim_node(int node_idx, const Key &key, const NodeSnapshotVector &snapshots,
+            NodeSplitInfo &prev_split_info) {
     const NodeSnapshot &node_snapshot = snapshots[node_idx];
     const NodeSnapshot &parent_snapshot = snapshots[node_idx - 1];
     Node *node = static_cast<Node *>(node_snapshot.node);
@@ -1190,32 +1190,35 @@ private:
     MutexLockType lock{parent ? parent->mutex : *m_root_mutex};
 
     if (is_snapshot_stale(parent_snapshot))
-      return OpResult::STALE_SNAPSHOT;
+      return {OpResult::STALE_SNAPSHOT, {}};
 
     {
       MutexLockType lock{node->mutex};
 
       if (is_snapshot_stale(node_snapshot))
-        return OpResult::STALE_SNAPSHOT;
+        return {OpResult::STALE_SNAPSHOT, {}};
 
       trimmed_node = node->trim();
     }
 
     BTREE_UPDATE_STAT_NODE_BASED(trim);
 
-    return replace_subtree_on_version_match(snapshots, node_idx, [&]() {
-      if constexpr (Node::IsInner()) {
-        reinterpret_cast<inner_node_t *>(trimmed_node)
-            ->update_inner_for_split(prev_split_info);
-      }
+    return {replace_subtree_on_version_match(
+                snapshots, node_idx,
+                [&]() {
+                  if constexpr (Node::IsInner()) {
+                    reinterpret_cast<inner_node_t *>(trimmed_node)
+                        ->update_inner_for_split(prev_split_info);
+                  }
 
-      if (parent)
-        parent->update_inner_for_trim(key, trimmed_node);
-      else
-        store_root(trimmed_node);
+                  if (parent)
+                    parent->update_inner_for_trim(key, trimmed_node);
+                  else
+                    store_root(trimmed_node);
 
-      return true;
-    });
+                  return true;
+                }),
+            {trimmed_node, nullptr, nullptr}};
   }
 
   std::pair<OpResult, NodeSplitInfo>
@@ -1226,13 +1229,11 @@ private:
 
     if (node->canTrim()) {
       if (node->isLeaf())
-        return {
-            trim_node<leaf_node_t>(node_idx, key, snapshots, prev_split_info),
-            {}};
+        return trim_node<leaf_node_t>(node_idx, key, snapshots,
+                                      prev_split_info);
       else
-        return {
-            trim_node<inner_node_t>(node_idx, key, snapshots, prev_split_info),
-            {}};
+        return trim_node<inner_node_t>(node_idx, key, snapshots,
+                                       prev_split_info);
     } else {
       if (node->isLeaf())
         return split_node<leaf_node_t>(node_idx, snapshots, prev_split_info);
