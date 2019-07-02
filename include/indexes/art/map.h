@@ -835,7 +835,7 @@ public:
       m_size++;
     }
 
-    return old;
+    return std::move(old);
   }
 
   std::optional<value_type> Update(key_type key, value_type value) {
@@ -849,7 +849,7 @@ public:
       m_size--;
     }
 
-    return old;
+    return std::move(old);
   }
 
   std::size_t size() const { return m_size; }

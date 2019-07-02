@@ -1247,7 +1247,7 @@ public:
       store_rx(num_deletes, load_rx(num_deletes) + 1);
     }
 
-    return old;
+    return std::move(old);
   }
 
   std::size_t size() const {
