@@ -41,7 +41,9 @@ public:
   // enter_epoch guarantees that all shared objects, accessed by the calling
   // thread, after enter_epoch is called are safe.
   inline void enter_epoch() {
-    m_local_epoch[ThreadRegistry::ThreadID()].epoch = now();
+    m_local_epoch[ThreadRegistry::ThreadID()].epoch.store(
+        now(), std::memory_order_release);
+    std::atomic_thread_fence(std::memory_order_acquire);
   }
 
   // exit_epoch marks quiescent state of the calling thread.
