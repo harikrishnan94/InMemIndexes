@@ -5,8 +5,7 @@
 
 #include "common.h"
 #include "indexes/utils/EpochManager.h"
-#include "indexes/utils/Mutex.h"
-#include "indexes/utils/ThreadRegistry.h"
+#include "sync_prim/Mutex.h"
 
 #include <atomic>
 #include <memory>
@@ -78,7 +77,7 @@ private:
 
     const key_type key;
     std::atomic<version_t> version;
-    utils::Mutex m;
+    sync_prim::mutex::Mutex m;
 
     static constexpr version_t DEAD_VERSION =
         std::numeric_limits<version_t>::max();
@@ -753,7 +752,7 @@ private:
     UOP_Upsert,
   };
 
-  using LockType = std::unique_lock<utils::Mutex>;
+  using LockType = std::unique_lock<sync_prim::mutex::Mutex>;
 
   struct EpochGuard {
     const concurrent_map *map;
@@ -1155,7 +1154,7 @@ private:
     std::atomic<size_t> num_deletes;
   };
 
-  std::unique_ptr<utils::Mutex> root_mtx;
+  std::unique_ptr<sync_prim::mutex::Mutex> root_mtx;
   atomic_node_t root;
   std::unique_ptr<values_count_t[]> count;
 
@@ -1163,7 +1162,7 @@ private:
 
 public:
   concurrent_map()
-      : root_mtx(std::make_unique<utils::Mutex>()), root(nullptr),
+      : root_mtx(std::make_unique<sync_prim::mutex::Mutex>()), root(nullptr),
         count(std::make_unique<values_count_t[]>(
             utils::ThreadRegistry::MAX_THREADS)) {}
 

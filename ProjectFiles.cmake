@@ -7,13 +7,6 @@ set(BENCH_SRC_PATH "${SRC_PATH}/benchmark")
 set(YCSB_SRC_PATH "${BENCH_SRC_PATH}/ycsb")
 set(TEST_SRC_PATH "${PROJECT_PATH}/test")
 
-# Set library source files.
-set(SRC
-    "${SRC_UTILS_PATH}/Mutex.cpp"
-    "${SRC_UTILS_PATH}/ParkingLot.cpp"
-    "${SRC_UTILS_PATH}/ThreadRegistry.cpp"
-    "${SRC_UTILS_PATH}/TraceLog.cpp")
-
 # Set benchmark source files.
 set(BENCH_SRC
     "${BENCH_SRC_PATH}/benchBtree.cpp"

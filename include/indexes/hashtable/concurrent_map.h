@@ -4,7 +4,7 @@
 #pragma once
 
 #include "indexes/utils/EpochManager.h"
-#include "indexes/utils/Mutex.h"
+#include "sync_prim/Mutex.h"
 
 #include <algorithm>
 #include <atomic>
@@ -134,7 +134,7 @@ private:
     struct Link {
       std::atomic<typename Traits::LinkType> first;
       std::atomic<typename Traits::LinkType> next;
-      indexes::utils::Mutex m;
+      sync_prim::mutex::Mutex m;
     };
 
     size_t num_buckets;
@@ -278,7 +278,7 @@ private:
       InsertResult_Overflow,
     };
 
-    using MutexLock = std::unique_lock<indexes::utils::Mutex>;
+    using MutexLock = std::unique_lock<sync_prim::mutex::Mutex>;
 
     struct InsertSearchResult {
       InsertResult res;
@@ -327,7 +327,7 @@ private:
 
   std::atomic<HashTable *> ht;
   std::atomic<bool> is_migration_in_progress;
-  indexes::utils::Mutex migration_mutex;
+  sync_prim::mutex::Mutex migration_mutex;
   std::atomic<int> num_migrations;
 
   indexes::utils::EpochManager<uint64_t, void> m_gc;
@@ -357,7 +357,7 @@ private:
     for (size_t bucket = 0; bucket < old_num_buckets; bucket++) {
       auto &old_bucket = old_ht->buckets[bucket];
       auto &link = old_ht->link[bucket];
-      auto bucket_lock = std::lock_guard<indexes::utils::Mutex>{link.m};
+      auto bucket_lock = std::lock_guard<sync_prim::mutex::Mutex>{link.m};
 
       if (old_bucket.has_value()) {
         auto ires = new_ht->insert(old_bucket.key_value.first);
@@ -383,7 +383,7 @@ private:
   }
 
   void wait_for_migration_to_end() {
-    std::lock_guard<indexes::utils::Mutex> migration_lock{migration_mutex};
+    std::lock_guard<sync_prim::mutex::Mutex> migration_lock{migration_mutex};
   }
 
   void migrate_table(size_t new_num_buckets = 0) {

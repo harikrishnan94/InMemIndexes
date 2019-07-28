@@ -5,7 +5,7 @@
 
 #include "common.h"
 #include "indexes/utils/EpochManager.h"
-#include "indexes/utils/Mutex.h"
+#include "sync_prim/Mutex.h"
 
 #include <atomic>
 #include <bitset>
@@ -55,7 +55,7 @@ private:
     return atomicvar.load();
   }
 
-  using MutexLockType = std::lock_guard<indexes::utils::Mutex>;
+  using MutexLockType = std::lock_guard<sync_prim::mutex::Mutex>;
 
   enum class NodeType : int8_t { LEAF, INNER };
 
@@ -146,7 +146,7 @@ private:
     const std::optional<Key> lowkey;
     const std::optional<Key> highkey;
 
-    indexes::utils::Mutex mutex;
+    sync_prim::mutex::Mutex mutex;
 
     inline node_t(NodeType ntype, int initialsize, int a_height,
                   const std::optional<Key> &a_lowkey,
@@ -801,8 +801,8 @@ private:
 
   static constexpr int MAXHEIGHT = 32;
 
-  std::unique_ptr<indexes::utils::Mutex> m_root_mutex =
-      std::make_unique<indexes::utils::Mutex>();
+  std::unique_ptr<sync_prim::mutex::Mutex> m_root_mutex =
+      std::make_unique<sync_prim::mutex::Mutex>();
   std::atomic<nodestate_t> m_root_state = {};
   std::atomic<node_t *> m_root = nullptr;
 
@@ -1095,7 +1095,7 @@ private:
     static thread_local std::vector<node_t *> deleted_nodes;
 
     auto res = [&]() {
-      std::vector<std::unique_lock<indexes::utils::Mutex>> locks;
+      std::vector<std::unique_lock<sync_prim::mutex::Mutex>> locks;
       for (int node_idx = from_node;
            node_idx < static_cast<int>(snapshots.size()); node_idx++) {
         const NodeSnapshot &snapshot = snapshots[node_idx];

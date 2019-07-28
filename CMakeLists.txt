@@ -51,7 +51,32 @@ find_path(VCPKG_INCLUDE_DIR NAMES tsl gsl)
 
 include_directories(AFTER ${VCPKG_INCLUDE_DIR})
 
-set(LIBRARY_LINK_TYPE STATIC)
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
+    # Update submodules as needed
+    option(GIT_SUBMODULE "Check submodules during build" ON)
+    if(GIT_SUBMODULE)
+        message(STATUS "Submodule update")
+        execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                        RESULT_VARIABLE GIT_SUBMOD_RESULT)
+        if(NOT GIT_SUBMOD_RESULT EQUAL "0")
+            message(
+                FATAL_ERROR
+                    "git submodule update --init failed with ${GIT_SUBMOD_RESULT}, please checkout submodules"
+                )
+        endif()
+    endif()
+endif()
+
+if(NOT EXISTS "${PROJECT_SOURCE_DIR}/external/synchronization-primitives/CMakeLists.txt")
+    message(
+        FATAL_ERROR
+            "The submodules were not downloaded! GIT_SUBMODULE was turned off or failed. Please update submodules and try again."
+        )
+endif()
+
+add_subdirectory(external/synchronization-primitives)
 
 if(NOT MSVC)
     add_compile_options("-Wall" "-pedantic")
@@ -64,7 +89,10 @@ if(BUILD_COVERAGE_ANALYSIS)
     setup_target_for_coverage_lcov(NAME coverage EXECUTABLE ${TEST} DEPENDENCIES ${TEST})
 endif(BUILD_COVERAGE_ANALYSIS)
 
-add_library(${LIB} ${LIBRARY_LINK_TYPE} ${SRC})
+add_library(${LIB} INTERFACE)
+target_include_directories(${LIB} INTERFACE include/)
+target_include_directories(${LIB} INTERFACE external/synchronization-primitives/include)
+target_link_libraries(${LIB} INTERFACE sync_primitives)
 
 add_subdirectory(src/benchmark)
 add_subdirectory(test)

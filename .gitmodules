@@ -1,0 +1,3 @@
+[submodule "external/synchronization-primitives"]
+	path = external/synchronization-primitives
+	url = https://github.com/harikrishnan94/synchronization-primitives

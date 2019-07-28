@@ -2,6 +2,8 @@
 
 #include <inttypes.h>
 
+#include "sync_prim/ThreadRegistry.h"
+
 #if defined(_WIN32) && defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
 #pragma intrinsic(_BitScanReverse64)
@@ -67,4 +69,5 @@ static inline int __builtin_clzl(unsigned long long x) {
 namespace indexes::utils {
 static inline int leading_zeroes(uint64_t val) { return __builtin_clzl(val); }
 static inline int leading_zeroes(uint32_t val) { return __builtin_clz(val); }
+using ThreadRegistry = sync_prim::ThreadRegistry;
 } // namespace indexes::utils

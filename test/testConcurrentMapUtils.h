@@ -1,4 +1,4 @@
-#include "indexes/utils/ThreadRegistry.h"
+#include "indexes/utils/Utils.h"
 
 #include <doctest/doctest.h>
 #include <gsl/span>
