@@ -45,3 +45,5 @@ CMakeSettings.json
 # Build directories
 build*
 .clangd/*
+.ccls
+compile_flags.txt
