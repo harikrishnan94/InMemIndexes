@@ -1,6 +1,6 @@
 add_executable(${BENCHMARK} ${BENCH_SRC})
 target_link_libraries(${BENCHMARK} PRIVATE ${LIB})
-target_link_libraries(${BENCHMARK} PRIVATE benchmark::benchmark_main unofficial::abseil::hash)
+target_link_libraries(${BENCHMARK} PRIVATE benchmark::benchmark_main absl::hash)
 
 find_package(Boost REQUIRED COMPONENTS system thread program_options)
 
@@ -11,7 +11,7 @@ target_include_directories(${RAND_INT_BENCH} PRIVATE ${BENCH_SRC_PATH} ${Boost_I
 target_link_libraries(${RAND_INT_BENCH}
                       PRIVATE ${LIB}
                               ${CMAKE_THREAD_LIBS_INIT}
-                              unofficial::abseil::hash
+                              absl::hash
                               ${Boost_LIBRARIES})
 
 add_executable(${YCSB_BENCH} ${YCSB_SRC})
