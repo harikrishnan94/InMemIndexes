@@ -16,8 +16,7 @@
 #include <vector>
 
 namespace indexes::btree {
-template <typename Key, typename Value, typename Comparator,
-          typename Traits = btree_traits_default,
+template <typename Key, typename Value, typename Traits = btree_traits_default,
           typename Stats = std::conditional_t<Traits::STAT, btree_stats_t,
                                               btree_empty_stats_t>>
 class concurrent_map {
@@ -31,18 +30,13 @@ public:
   using const_reference = const value_type &;
 
 private:
-  static constexpr auto compare = Comparator{};
-
-  static inline bool key_less(const Key &k1, const Key &k2) {
-    return compare(k1, k2) < 0;
+  template <typename KeyT1, typename KeyT2>
+  static inline bool key_less(const KeyT1 &k1, const KeyT2 &k2) {
+    return k1 < k2;
   }
-
-  static inline bool key_greater(const Key &k1, const Key &k2) {
-    return compare(k1, k2) > 0;
-  }
-
-  static inline bool key_equal(const Key &k1, const Key &k2) {
-    return compare(k1, k2) == 0;
+  template <typename KeyT1, typename KeyT2>
+  static inline bool key_equal(const KeyT1 &k1, const KeyT2 &k2) {
+    return k1 == k2;
   }
 
   template <typename T>
@@ -212,8 +206,12 @@ private:
     INSERTED
   };
 
+  template <typename ValueType> struct align_helper {
+    static constexpr auto align =
+        std::max(alignof(std::pair<Key, ValueType>), alignof(std::max_align_t));
+  };
   template <typename ValueType, NodeType NType>
-  struct inherited_node_t : node_t {
+  struct alignas(align_helper<ValueType>::align) inherited_node_t : node_t {
     using value_t = ValueType;
     using key_value_t = std::pair<Key, value_t>;
 
@@ -314,24 +312,26 @@ private:
 
     // Node search helpers
 
-    int lower_bound_pos(const Key &key, int num_values) const {
+    template <typename KeyType>
+    int lower_bound_pos(const KeyType &key, int num_values) const {
       int firstslot = IsLeaf() ? 0 : 1;
       std::atomic<int> *slots = this->get_slots();
 
       return std::lower_bound(slots + firstslot, slots + num_values, key,
-                              [this](int slot, const Key &key) {
+                              [this](int slot, const KeyType &key) {
                                 return key_less(
                                     get_key_value_for_offset(slot)->first, key);
                               }) -
              slots;
     }
 
-    int upper_bound_pos(const Key &key, int num_values) const {
+    template <typename KeyType>
+    int upper_bound_pos(const KeyType &key, int num_values) const {
       int firstslot = IsLeaf() ? 0 : 1;
       std::atomic<int> *slots = this->get_slots();
       int pos =
           std::upper_bound(slots + firstslot, slots + num_values, key,
-                           [this](const Key &key, int slot) {
+                           [this](const KeyType &key, int slot) {
                              return key_less(
                                  key, get_key_value_for_offset(slot)->first);
                            }) -
@@ -340,7 +340,8 @@ private:
       return IsInner() ? std::min(pos - 1, num_values - 1) : pos;
     }
 
-    std::pair<int, bool> lower_bound(const Key &key) const {
+    template <typename KeyType>
+    std::pair<int, bool> lower_bound(const KeyType &key) const {
       int num_values = this->num_values;
       int pos = lower_bound_pos(key, num_values);
       bool present =
@@ -349,15 +350,15 @@ private:
       return {pos, present};
     }
 
-    INNER_ONLY
-    int search_inner(const Key &key) const {
+    INNER_ONLY_WITH_KEY
+    int search_inner(const KeyType &key) const {
       auto [pos, key_present] = lower_bound(key);
 
       return !key_present ? pos - 1 : pos;
     }
 
-    INNER_ONLY
-    value_t get_value_lower_than(const Key &key) const {
+    INNER_ONLY_WITH_KEY
+    value_t get_value_lower_than(const KeyType &key) const {
       int pos = search_inner(key);
 
       if (pos == 0)
@@ -366,8 +367,8 @@ private:
       return get_child(key_equal(key, get_key(pos)) ? pos - 1 : pos);
     }
 
-    INNER_ONLY
-    inline value_t get_child_for_key(const Key &key) const {
+    INNER_ONLY_WITH_KEY
+    inline value_t get_child_for_key(const KeyType &key) const {
       return get_child(search_inner(key));
     }
 
@@ -702,8 +703,8 @@ private:
       return mergednode;
     }
 
-    LEAF_ONLY
-    void get_slots_greater_than(const Key &key,
+    LEAF_ONLY_WITH_KEY
+    void get_slots_greater_than(const KeyType &key,
                                 std::vector<int> &slot_offsets) const {
       int num_values = this->num_values;
       int pos = upper_bound_pos(key, num_values);
@@ -716,8 +717,8 @@ private:
       }
     }
 
-    LEAF_ONLY
-    void get_slots_greater_than_eq(const Key &key,
+    LEAF_ONLY_WITH_KEY
+    void get_slots_greater_than_eq(const KeyType &key,
                                    std::vector<int> &slot_offsets) const {
       int num_values = this->num_values;
       int pos = lower_bound_pos(key, num_values);
@@ -1011,7 +1012,8 @@ private:
     return snapshots.size() > 1 && is_leaf_locked;
   }
 
-  NodeSnapshot get_leaf_containing(const Key &key) const {
+  template <typename KeyType>
+  NodeSnapshot get_leaf_containing(const KeyType &key) const {
     NodeSnapshot leaf_snapshot{};
     DummyType dummy;
 
@@ -1545,38 +1547,43 @@ private:
     return leaf;
   }
 
-  leaf_node_t *get_next_leaf(const Key &highkey,
-                             std::vector<int> &slots) const {
-    leaf_node_t *leaf;
-    const Key *key = std::addressof(highkey);
+  template <typename KeyType>
+  std::tuple<bool, NodeSnapshot, const Key *>
+  get_next_leaf_util(const KeyType &key, std::vector<int> &slots) const {
+    NodeSnapshot leaf_snapshot = get_leaf_containing(key);
+    auto leaf = ASLEAF(leaf_snapshot.node);
 
-    do {
-      NodeSnapshot leaf_snapshot = get_leaf_containing(*key);
+    if (leaf) {
+      leaf->get_slots_greater_than_eq(key, slots);
 
-      leaf = ASLEAF(leaf_snapshot.node);
-
-      if (leaf) {
-        leaf->get_slots_greater_than_eq(*key, slots);
-
-        if (is_snapshot_stale(leaf_snapshot)) {
-          BTREE_UPDATE_STAT(retry, ++);
-          continue;
-        }
-
-        if (leaf && slots.empty()) {
-          if (leaf->highkey) {
-            key = std::addressof(leaf->highkey.value());
-            continue;
-          } else {
-            leaf = nullptr;
-          }
-        }
-        break;
+      if (is_snapshot_stale(leaf_snapshot)) {
+        BTREE_UPDATE_STAT(retry, ++);
+        return {true, leaf_snapshot, nullptr};
       }
 
-    } while (leaf);
+      if (leaf && slots.empty()) {
+        if (leaf->highkey)
+          return {true, leaf_snapshot, std::addressof(leaf->highkey.value())};
+        else
+          leaf_snapshot.node = nullptr;
+      }
 
-    return leaf;
+      return {false, leaf_snapshot, nullptr};
+    }
+
+    return {false, leaf_snapshot, nullptr};
+  }
+
+  template <typename KeyType>
+  leaf_node_t *get_next_leaf(const KeyType &highkey,
+                             std::vector<int> &slots) const {
+    auto [retry, leaf_snapshot, key] = get_next_leaf_util(highkey, slots);
+
+    while (retry) {
+      std::tie(retry, leaf_snapshot, key) = get_next_leaf_util(*key, slots);
+    }
+
+    return ASLEAF(leaf_snapshot.node);
   }
 
   inline NodeSnapshot get_last_leaf() const {
@@ -1617,7 +1624,8 @@ private:
     return leaf_snapshot;
   }
 
-  inline NodeSnapshot get_upper_bound_leaf(const Key &key) const {
+  template <typename KeyType>
+  inline NodeSnapshot get_upper_bound_leaf(const KeyType &key) const {
     NodeSnapshot leaf_snapshot{};
     DummyType dummy;
 
@@ -1685,7 +1693,7 @@ public:
     }
   }
 
-  std::optional<Value> Search(const Key &key) {
+  template <typename KeyType> std::optional<Value> Search(const KeyType &key) {
     while (true) {
       EpochGuard eg(this);
       NodeSnapshot leaf_snapshot = get_leaf_containing(key);
@@ -1940,14 +1948,16 @@ public:
 
   inline const_reverse_iterator rend() const { return crend(); }
 
-  inline const_iterator lower_bound(const Key &key) const {
+  template <typename KeyType>
+  inline const_iterator lower_bound(const KeyType &key) const {
     std::vector<int> slots;
     leaf_node_t *leaf = get_next_leaf(key, slots);
 
     return leaf ? const_iterator{this, leaf, std::move(slots), 0} : end();
   }
 
-  inline const_iterator upper_bound(const Key &key) const {
+  template <typename KeyType>
+  inline const_iterator upper_bound(const KeyType &key) const {
     std::vector<int> slots;
     leaf_node_t *leaf;
 

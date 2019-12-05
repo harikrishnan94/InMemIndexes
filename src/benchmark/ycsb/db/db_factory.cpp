@@ -29,12 +29,6 @@ template <typename Key, typename T, typename Hash = std::hash<Key>,
 using robin_map =
     tsl::robin_map<Key, T, Hash, KeyEqual, Allocator, false, GrowthPolicy>;
 
-struct StringCompare {
-  int operator()(const std::string &a, const std::string &b) const {
-    return a.compare(b);
-  }
-};
-
 DB *DBFactory::CreateDB(utils::Properties &props) {
   if (props["dbname"] == "stl_map") {
     return new LockedMapDB<SCAN, std::map>;
@@ -46,8 +40,7 @@ DB *DBFactory::CreateDB(utils::Properties &props) {
     return new LockedMapDB<SCAN, indexes::btree::map>;
   } else if (props["dbname"] == "concurrent_btree") {
     return new ConcurrentMapDB<
-        SCAN, indexes::btree::concurrent_map<std::string, DB::KVPair *,
-                                             StringCompare>>;
+        SCAN, indexes::btree::concurrent_map<std::string, DB::KVPair *>>;
   } else {
     return nullptr;
   }

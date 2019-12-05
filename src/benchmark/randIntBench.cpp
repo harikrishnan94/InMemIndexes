@@ -23,12 +23,8 @@ struct btree_big_page_traits : indexes::btree::btree_traits_default {
 
 using u64 = uint64_t;
 
-struct LongCompare {
-  int operator()(u64 a, u64 b) const { return (a < b) ? -1 : (a > b); }
-};
-
-using BtreeMap = indexes::btree::concurrent_map<u64, u64, LongCompare,
-                                                btree_big_page_traits>;
+using BtreeMap =
+    indexes::btree::concurrent_map<u64, u64, btree_big_page_traits>;
 using HashMap = indexes::hashtable::concurrent_map<u64, u64, absl::Hash<u64>>;
 using ArtMap = indexes::art::concurrent_map<u64>;
 

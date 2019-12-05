@@ -1,3 +1,4 @@
+#include "indexes/btree/key.h"
 #include "indexes/btree/map.h"
 #include "sha512.h"
 
@@ -23,19 +24,32 @@ template class indexes::btree::map<std::string, int, btree_traits_string_key>;
 TEST_SUITE_BEGIN("btree");
 
 TEST_CASE("BtreeMapBasic") {
-  indexes::btree::map<int, int, btree_small_page_traits> map;
+  using Key = indexes::btree::compound_key<int, int, int>;
+  using PartKey = indexes::btree::compound_key<int>;
+  indexes::btree::map<Key, int, btree_small_page_traits> map;
 
-  int num_keys = 100000;
+  constexpr auto num_keys = 100000;
 
   std::uniform_int_distribution<int> udist{1, num_keys};
   std::random_device r;
   std::seed_seq seed{r(), r(), r(), r(), r(), r(), r(), r()};
   std::mt19937 rnd(seed);
 
-  std::map<int, int> key_values;
+  auto gen_key = [&] { return Key{udist(rnd), udist(rnd), udist(rnd)}; };
+  auto gen_part_key = [&] { return PartKey{udist(rnd)}; };
+  auto min_key = [] {
+    auto min = std::numeric_limits<int>::min();
+    return Key{min, min, min};
+  };
+  auto max_key = [] {
+    auto max = std::numeric_limits<int>::max();
+    return Key{max, max, max};
+  };
+
+  std::map<Key, int> key_values;
 
   for (int i = 0; i < num_keys; i++) {
-    int key = udist(rnd);
+    auto key = gen_key();
 
     map[key] = i;
     key_values[key] = i;
@@ -45,10 +59,10 @@ TEST_CASE("BtreeMapBasic") {
 
   // Forward iterator
   {
-    auto map_iter = map.lower_bound(std::numeric_limits<int>::min());
-    auto kv_iter = key_values.lower_bound(std::numeric_limits<int>::min());
-    auto map_iter_end = map.upper_bound(std::numeric_limits<int>::max());
-    auto kv_iter_end = key_values.upper_bound(std::numeric_limits<int>::max());
+    auto map_iter = map.lower_bound(min_key());
+    auto kv_iter = key_values.lower_bound(min_key());
+    auto map_iter_end = map.upper_bound(max_key());
+    auto kv_iter_end = key_values.upper_bound(max_key());
 
     while (map_iter != map_iter_end) {
       REQUIRE(*map_iter++ == *kv_iter++);
@@ -84,21 +98,25 @@ TEST_CASE("BtreeMapBasic") {
   }
 
   for (int i = 0; i < num_keys; i++) {
-    int key = udist(rnd);
+    auto key = gen_part_key();
     auto map_lower = map.lower_bound(key);
     auto map_upper = map.upper_bound(key);
-    auto kv_lower = key_values.lower_bound(key);
-    auto kv_upper = key_values.upper_bound(key);
 
-    if (kv_lower != key_values.end())
-      REQUIRE(*map_lower == *kv_lower);
-    else
-      REQUIRE(map_lower == map.end());
+    if (map_lower == map.end() || map_upper == map.end()) {
+      REQUIRE(key >= map.crbegin()->first);
+      continue;
+    }
 
-    if (kv_upper != key_values.end())
-      REQUIRE(*map_upper == *kv_upper);
-    else
-      REQUIRE(map_upper == map.end());
+    auto kv_lower = key_values.find(map_lower->first);
+    auto kv_upper = key_values.find(map_upper->first);
+
+    REQUIRE(kv_lower != key_values.end());
+    REQUIRE(kv_upper != key_values.end());
+
+    while (map_lower != map_upper) {
+      REQUIRE(*map_lower++ == *kv_lower++);
+    }
+    REQUIRE(kv_lower == kv_upper);
   }
 
   for (const auto &kv : key_values) {
@@ -111,30 +129,30 @@ TEST_CASE("BtreeMapBasic") {
   }
 
   REQUIRE(map.size() == 0);
-  REQUIRE(map.find(0) == map.end());
+  REQUIRE(map.find(Key{0, 0, 0}) == map.end());
 
   // lower and upper bound
   {
-    int key = udist(rnd);
+    auto key = gen_key();
 
-    map[key] = key;
+    map[key] = std::get<0>(key);
     REQUIRE(map.lower_bound(key) != map.upper_bound(key));
 
     map.erase(key);
     REQUIRE(map.lower_bound(key) == map.upper_bound(key));
 
-    key = std::numeric_limits<int>::min();
+    key = min_key();
     REQUIRE(map.lower_bound(key) == map.upper_bound(key));
 
-    key = std::numeric_limits<int>::max();
+    key = max_key();
     REQUIRE(map.lower_bound(key) == map.upper_bound(key));
   }
 
   // Iterator operator
   {
-    int key = udist(rnd);
+    auto key = gen_key();
 
-    map[key] = key;
+    map[key] = std::get<0>(key);
     REQUIRE((*map.lower_bound(key)).first == map.lower_bound(key)->first);
   }
 }

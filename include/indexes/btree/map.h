@@ -6,8 +6,8 @@
 #include "common.h"
 
 namespace indexes::btree {
-template <class Key, class Value, typename Traits = btree_traits_default,
-          class Compare = std::less<Key>,
+template <typename Key, typename Value, typename Traits = btree_traits_default,
+          typename Compare = std::less<Key>,
           typename Stats = std::conditional_t<Traits::STAT, btree_stats_t,
                                               btree_empty_stats_t>>
 class map {
@@ -26,16 +26,17 @@ private:
 
   enum class NodeType : bool { LEAF, INNER };
 
-  static inline bool key_less(const Key &k1, const Key &k2) {
-    return comp(k1, k2);
+  template <typename KeyT1, typename KeyT2>
+  static inline bool key_less(const KeyT1 &k1, const KeyT2 &k2) {
+    return k1 < k2;
   }
-
-  static inline bool key_greater(const Key &k1, const Key &k2) {
-    return key_less(k2, k1);
+  template <typename KeyT1, typename KeyT2>
+  static inline bool key_greater(const KeyT1 &k1, const KeyT2 &k2) {
+    return k2 < k1;
   }
-
-  static inline bool key_equal(const Key &k1, const Key &k2) {
-    return !key_less(k1, k2) && !key_greater(k1, k2);
+  template <typename KeyT1, typename KeyT2>
+  static inline bool key_equal(const KeyT1 &k1, const KeyT2 &k2) {
+    return k1 == k2;
   }
 
   struct node_t {
@@ -98,8 +99,12 @@ private:
     INSERTED
   };
 
+  template <typename ValueType> struct align_helper {
+    static constexpr auto align =
+        std::max(alignof(std::pair<Key, ValueType>), alignof(std::max_align_t));
+  };
   template <typename ValueType, NodeType NType>
-  struct alignas(std::pair<Key, ValueType>) inherited_node_t : node_t {
+  struct alignas(align_helper<ValueType>::align) inherited_node_t : node_t {
     using value_t = ValueType;
     using key_value_t = std::pair<Key, value_t>;
 
@@ -183,24 +188,24 @@ private:
       return slot == 0 ? get_first_child() : get_key_value(slot)->second;
     }
 
-    int lower_bound_pos(const Key &key) const {
+    template <typename KeyType> int lower_bound_pos(const KeyType &key) const {
       int firstslot = IsLeaf() ? 0 : 1;
       int *slots = get_slots();
 
       return std::lower_bound(slots + firstslot, slots + this->num_values, key,
-                              [this](int slot, const Key &key) {
+                              [this](int slot, const KeyType &key) {
                                 return key_less(
                                     get_key_value_for_offset(slot)->first, key);
                               }) -
              slots;
     }
 
-    int upper_bound_pos(const Key &key) const {
+    template <typename KeyType> int upper_bound_pos(const KeyType &key) const {
       int firstslot = IsLeaf() ? 0 : 1;
       int *slots = get_slots();
       int pos =
           std::upper_bound(slots + firstslot, slots + this->num_values, key,
-                           [this](const Key &key, int slot) {
+                           [this](const KeyType &key, int slot) {
                              return key_less(
                                  key, get_key_value_for_offset(slot)->first);
                            }) -
@@ -281,7 +286,8 @@ private:
       *oldval = val;
     }
 
-    std::pair<int, bool> lower_bound(const Key &key) const {
+    template <typename KeyType>
+    std::pair<int, bool> lower_bound(const KeyType &key) const {
       int pos = lower_bound_pos(key);
       bool present = pos < this->num_values &&
                      !key_greater(get_key_value(pos)->first, key);
@@ -289,15 +295,15 @@ private:
       return std::make_pair(pos, present);
     }
 
-    INNER_ONLY
-    int search_inner(const Key &key) const {
+    INNER_ONLY_WITH_KEY
+    int search_inner(const KeyType &key) const {
       auto [pos, key_present] = lower_bound(key);
 
       return !key_present ? pos - 1 : pos;
     }
 
-    INNER_ONLY
-    value_t get_value_lower_than(const Key &key) const {
+    INNER_ONLY_WITH_KEY
+    value_t get_value_lower_than(const KeyType &key) const {
       int pos = search_inner(key);
 
       if (pos == 0)
@@ -334,8 +340,8 @@ private:
       this->logical_pagesize -= sizeof(key_value_t) + sizeof(int);
     }
 
-    INNER_ONLY
-    inline value_t get_child_for_key(const Key &key) const {
+    INNER_ONLY_WITH_KEY
+    inline value_t get_child_for_key(const KeyType &key) const {
       return get_child(search_inner(key));
     }
 
@@ -604,7 +610,8 @@ private:
     return {node, pos};
   }
 
-  inline leaf_node_t *get_leaf_containing(const Key &key) const {
+  template <typename KeyType>
+  inline leaf_node_t *get_leaf_containing(const KeyType &key) const {
     node_t *current;
 
     for (current = m_root; current && current->isInner();) {
@@ -661,7 +668,8 @@ private:
     return ASLEAF(current);
   }
 
-  inline leaf_node_t *get_upper_bound_leaf(const Key &key) const {
+  template <typename KeyType>
+  inline leaf_node_t *get_upper_bound_leaf(const KeyType &key) const {
     node_t *current;
 
     for (current = m_root; current && current->isInner();) {
@@ -884,7 +892,7 @@ public:
 
   inline iterator end() { return {this, nullptr, 0}; }
 
-  inline const_iterator cbegin() const { return begin(); }
+  inline const_iterator cbegin() const { return {this, get_first_leaf(), 0}; }
 
   inline const_iterator cend() const { return end(); }
 
@@ -893,14 +901,16 @@ public:
   inline const_iterator end() const { return cend(); }
 
   inline reverse_iterator rbegin() {
-    leaf_node_t *leaf = get_last_leaf();
-
+    auto leaf = get_last_leaf();
     return {this, leaf, leaf->num_values - 1};
   }
 
   inline reverse_iterator rend() { return end(); }
 
-  inline const_reverse_iterator crbegin() const { return rbegin(); }
+  inline const_reverse_iterator crbegin() const {
+    auto leaf = get_last_leaf();
+    return {this, leaf, leaf->num_values - 1};
+  }
 
   inline const_reverse_iterator crend() const { return end(); }
 
@@ -908,7 +918,7 @@ public:
 
   inline const_reverse_iterator rend() const { return crend(); }
 
-  inline iterator lower_bound(const Key &key) {
+  template <typename KeyType> inline iterator lower_bound(const KeyType &key) {
     leaf_node_t *leaf = get_leaf_containing(key);
 
     if (leaf) {
@@ -921,7 +931,7 @@ public:
     return end();
   }
 
-  inline iterator upper_bound(const Key &key) {
+  template <typename KeyType> inline iterator upper_bound(const KeyType &key) {
     leaf_node_t *leaf = get_upper_bound_leaf(key);
 
     if (leaf) {
@@ -934,7 +944,8 @@ public:
     return end();
   }
 
-  inline const_iterator lower_bound(const Key &key) const {
+  template <typename KeyType>
+  inline const_iterator lower_bound(const KeyType &key) const {
     leaf_node_t *leaf = get_leaf_containing(key);
 
     if (leaf) {
@@ -947,7 +958,8 @@ public:
     return end();
   }
 
-  inline const_iterator upper_bound(const Key &key) const {
+  template <typename KeyType>
+  inline const_iterator upper_bound(const KeyType &key) const {
     leaf_node_t *leaf = get_upper_bound_leaf(key);
 
     if (leaf) {

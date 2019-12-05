@@ -52,8 +52,14 @@
 #define INNER_ONLY                                                             \
   template <typename Dummy = void,                                             \
             typename = typename std::enable_if_t<IsInner(), Dummy>>
+#define INNER_ONLY_WITH_KEY                                                    \
+  template <typename KeyType, typename Dummy = void,                           \
+            typename = typename std::enable_if_t<IsInner(), Dummy>>
 #define LEAF_ONLY                                                              \
   template <typename Dummy = void,                                             \
+            typename = typename std::enable_if_t<IsLeaf(), Dummy>>
+#define LEAF_ONLY_WITH_KEY                                                     \
+  template <typename KeyType, typename Dummy = void,                           \
             typename = typename std::enable_if_t<IsLeaf(), Dummy>>
 
 namespace indexes::btree {

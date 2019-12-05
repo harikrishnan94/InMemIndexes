@@ -16,15 +16,9 @@ static int64_t *get_rand_values() {
   return keys.get();
 }
 
-struct LongCompare {
-  inline int operator()(int64_t a, int64_t b) const {
-    return (a < b) ? -1 : (a > b);
-  }
-};
-
 static void BM_BtreeInsert(benchmark::State &state) {
   indexes::utils::ThreadRegistry::RegisterThread();
-  indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
+  indexes::btree::concurrent_map<int64_t, int64_t> map;
   int64_t ind = 0;
   int64_t *keys = get_rand_values();
 
@@ -48,7 +42,7 @@ static void BM_BtreeSearch(benchmark::State &state) {
   int64_t *keys = get_rand_values();
   int64_t ind = 0;
   static auto map = [&keys]() {
-    indexes::btree::concurrent_map<int64_t, int64_t, LongCompare> map;
+    indexes::btree::concurrent_map<int64_t, int64_t> map;
 
     for (int64_t i = 0; i < MAXSIZE; i++) {
       auto key = keys[i];
