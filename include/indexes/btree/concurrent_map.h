@@ -32,7 +32,7 @@ class concurrent_map {
 public:
   using key_type = Key;
   using mapped_type = Value;
-  using value_type = std::pair<const Key, Value>;
+  using value_type = std::pair<const key_type, mapped_type>;
   using size_type = std::size_t;
   using difference_type = std::ptrdiff_t;
   using reference = value_type &;
@@ -53,21 +53,28 @@ private:
   static inline void store_relaxed(std::atomic<T> &atomicvar, T newval) {
     atomicvar.store(newval, std::memory_order_relaxed);
   }
-
+  template <typename T>
+  static inline void store_release(std::atomic<T> &atomicvar, T newval) {
+    atomicvar.store(newval, std::memory_order_release);
+  }
   template <typename T>
   static inline T load_relaxed(const std::atomic<T> &atomicvar) {
-    return atomicvar.load();
+    return atomicvar.load(std::memory_order_relaxed);
+  }
+  template <typename T>
+  static inline T load_acquire(const std::atomic<T> &atomicvar) {
+    return atomicvar.load(std::memory_order_acquire);
   }
 
-  using MutexLockType = std::lock_guard<sync_prim::mutex::Mutex>;
+  using lock_guard = std::lock_guard<sync_prim::mutex::Mutex>;
 
   enum class NodeType : int8_t { LEAF, INNER };
 
   class nodestate_t {
+    using bitset = std::bitset<64>;
+
     static constexpr int IS_LOCKED_BIT = 62;
     static constexpr int IS_DELETED_BIT = 63;
-
-    using bitset = std::bitset<64>;
 
     bitset bits = {};
 
@@ -81,8 +88,7 @@ private:
     }
 
     inline uint64_t version() const {
-      bitset t = bits;
-
+      auto t = bits;
       return t.reset(IS_LOCKED_BIT).reset(IS_DELETED_BIT).to_ullong();
     }
 
@@ -91,7 +97,7 @@ private:
     inline bool is_deleted() const { return bits.test(IS_DELETED_BIT); }
 
     inline nodestate_t increment_version() {
-      bitset version_only = version() + 1;
+      auto version_only = version() + 1;
       bitset zero_version = {};
 
       zero_version.set(IS_LOCKED_BIT).set(IS_DELETED_BIT);
@@ -127,7 +133,7 @@ private:
   struct NodeSplitInfo {
     node_t *left;
     node_t *right;
-    const Key *split_key;
+    const key_type *split_key;
   };
 
   struct node_t {
@@ -147,14 +153,14 @@ private:
     const NodeType node_type;
     const int height;
 
-    const std::optional<Key> lowkey;
-    const std::optional<Key> highkey;
+    const std::optional<key_type> lowkey;
+    const std::optional<key_type> highkey;
 
     sync_prim::mutex::Mutex mutex;
 
     inline node_t(NodeType ntype, int initialsize, int a_height,
-                  const std::optional<Key> &a_lowkey,
-                  const std::optional<Key> &a_highkey)
+                  const std::optional<key_type> &a_lowkey,
+                  const std::optional<key_type> &a_highkey)
         : next_slot_offset(initialsize), node_type(ntype), height(a_height),
           lowkey(a_lowkey), highkey(a_highkey) {}
 
@@ -168,7 +174,7 @@ private:
 
     // We only need to find out if we have more than two deleted values, to trim
     inline void incrementNumDeadValues() {
-      int8_t num_dead_values = load_relaxed(this->num_dead_values);
+      auto num_dead_values = load_relaxed(this->num_dead_values);
 
       store_relaxed<int8_t>(this->num_dead_values, num_dead_values > 1
                                                        ? num_dead_values
@@ -201,7 +207,7 @@ private:
         delete ASINNER(node);
     }
 
-    inline const Key &get_first_key() const {
+    inline const key_type &get_first_key() const {
       if (isInner())
         return static_cast<const inner_node_t *>(this)->get_first_key();
       else
@@ -217,13 +223,13 @@ private:
   };
 
   template <typename ValueType> struct align_helper {
-    static constexpr auto align =
-        std::max(alignof(std::pair<Key, ValueType>), alignof(std::max_align_t));
+    static constexpr auto align = std::max(
+        alignof(std::pair<key_type, ValueType>), alignof(std::max_align_t));
   };
   template <typename ValueType, NodeType NType>
   struct alignas(align_helper<ValueType>::align) inherited_node_t : node_t {
     using value_t = ValueType;
-    using key_value_t = std::pair<Key, value_t>;
+    using key_value_t = std::pair<key_type, value_t>;
 
     template <typename KeyType> friend class SearchOps;
 
@@ -233,8 +239,8 @@ private:
 
     static constexpr bool IsInner() { return NType == NodeType::INNER; }
 
-    inline inherited_node_t(const std::optional<Key> &lowkey,
-                            const std::optional<Key> &highkey, int height)
+    inline inherited_node_t(const std::optional<key_type> &lowkey,
+                            const std::optional<key_type> &highkey, int height)
         : node_t(NType, sizeof(inherited_node_t), height, lowkey, highkey) {}
 
     inline ~inherited_node_t() {
@@ -243,8 +249,8 @@ private:
       }
     }
 
-    static inherited_node_t *alloc(const std::optional<Key> &lowkey,
-                                   const std::optional<Key> &highkey,
+    static inherited_node_t *alloc(const std::optional<key_type> &lowkey,
+                                   const std::optional<key_type> &highkey,
                                    int height) {
       return new (new char[Traits::NODE_SIZE])
           inherited_node_t(lowkey, highkey, height);
@@ -254,8 +260,8 @@ private:
 
     // Must be called with both this's and other's mutex held
     inline bool haveEnoughSpace() const {
-      int next_slot_offset = load_relaxed(this->next_slot_offset);
-      int max_slot_offset = load_relaxed(this->max_slot_offset);
+      auto next_slot_offset = load_relaxed(this->next_slot_offset);
+      auto max_slot_offset = load_relaxed(this->max_slot_offset);
 
       return ((next_slot_offset + sizeof(int)) <=
               (this->last_value_offset - sizeof(key_value_t))) &&
@@ -265,8 +271,8 @@ private:
 
     // Must be called with both this's and other's mutex held
     inline bool canMerge(const node_t *other) const {
-      int logical_pagesize = load_relaxed(this->logical_pagesize);
-      int other_logical_pagesize = load_relaxed(other->logical_pagesize);
+      auto logical_pagesize = load_relaxed(this->logical_pagesize);
+      auto other_logical_pagesize = load_relaxed(other->logical_pagesize);
 
       return (logical_pagesize + other_logical_pagesize +
               (IsInner() ? sizeof(key_value_t) : 0)) +
@@ -279,13 +285,11 @@ private:
     }
 
     inline key_value_t *get_key_value(int slot) const {
-      const std::atomic<int> *slots = this->get_slots();
-
-      return get_key_value_for_offset(
-          slots[slot].load(std::memory_order_acquire));
+      auto slots = this->get_slots();
+      return get_key_value_for_offset(load_acquire(slots[slot]));
     }
 
-    inline const Key &get_key(int slot) const {
+    inline const key_type &get_key(int slot) const {
       if constexpr (IsInner())
         BTREE_DEBUG_ASSERT(slot != 0);
 
@@ -302,10 +306,10 @@ private:
 
     INNER_ONLY
     inline value_t get_child(int slot) const {
-      return get_child_ptr(slot)->load(std::memory_order_acquire);
+      return load_acquire(*get_child_ptr(slot));
     }
 
-    inline const Key &get_first_key() const {
+    inline const key_type &get_first_key() const {
       if constexpr (IsInner())
         return get_key_value(1)->first;
       else
@@ -317,8 +321,7 @@ private:
 
     INNER_ONLY
     inline value_t get_last_child() const {
-      int slot = this->num_values - 1;
-
+      auto slot = this->num_values - 1;
       return get_child(slot);
     }
 
@@ -353,7 +356,7 @@ private:
       BTREE_DEBUG_ASSERT(out_end_pos >= end_pos);
 
       while (start_pos < end_pos) {
-        slots[--out_end_pos].store(slots[--end_pos], std::memory_order_release);
+        store_release(slots[--out_end_pos], load_relaxed(slots[--end_pos]));
       }
     }
 
@@ -363,7 +366,7 @@ private:
       BTREE_DEBUG_ASSERT(out_pos < start_pos);
 
       while (start_pos < end_pos) {
-        slots[out_pos++].store(slots[start_pos++], std::memory_order_release);
+        store_release(slots[out_pos++], load_relaxed(slots[start_pos++]));
       }
     }
 
@@ -373,27 +376,27 @@ private:
       int num_values = this->num_values;
       BTREE_DEBUG_ASSERT(this->isInner() && num_values == 0);
 
-      std::atomic<int> *slots = this->get_slots();
+      auto slots = this->get_slots();
       int current_value_offset = this->last_value_offset - sizeof(value_t);
 
       new (this->opaque() + current_value_offset) value_t{val};
-      slots[0].store(current_value_offset, std::memory_order_relaxed);
+      store_relaxed(slots[0], current_value_offset);
 
-      this->num_values.store(num_values + 1, std::memory_order_relaxed);
+      store_relaxed(this->num_values, num_values + 1);
       update_meta_after_insert();
     }
 
     // Must not be called on a reachable node
-    inline void append(const Key &key, const value_t &val) {
+    inline void append(const key_type &key, const value_t &val) {
       std::atomic<int> *slots = this->get_slots();
       int current_value_offset = this->last_value_offset - sizeof(key_value_t);
       int pos = this->num_values;
       int num_values = this->num_values;
 
       new (this->opaque() + current_value_offset) key_value_t{key, val};
-      slots[pos].store(current_value_offset, std::memory_order_relaxed);
+      store_relaxed(slots[pos], current_value_offset);
 
-      this->num_values.store(num_values + 1, std::memory_order_relaxed);
+      store_relaxed(this->num_values, num_values + 1);
       update_meta_after_insert();
     }
 
@@ -403,12 +406,12 @@ private:
       std::atomic<int> *slots = this->get_slots();
 
       copy_backward(slots, pos, num_values, num_values + 1);
-      slots[pos].store(value_offset, std::memory_order_release);
-      this->num_values.store(num_values + 1, std::memory_order_release);
+      store_release(slots[pos], value_offset);
+      store_release(this->num_values, num_values + 1);
     }
 
     // Must be called with this's mutex held
-    inline InsertStatus insert_into_pos(const Key &key, const value_t &val,
+    inline InsertStatus insert_into_pos(const key_type &key, const value_t &val,
                                         int pos) {
       if (this->haveEnoughSpace()) {
         int current_value_offset =
@@ -459,7 +462,7 @@ private:
 
       int split_pos =
           IsInner() ? this->num_values / 2 : (this->num_values + 1) / 2;
-      const Key &split_key = get_key(split_pos);
+      const key_type &split_key = get_key(split_pos);
       inherited_node_t *left = alloc(this->lowkey, split_key, this->height);
       inherited_node_t *right = alloc(split_key, this->highkey, this->height);
 
@@ -482,7 +485,7 @@ private:
 
     // Must be called with this's mutex held
     inherited_node_t *merge(const inherited_node_t *other,
-                            const Key &merge_key) const {
+                            const key_type &merge_key) const {
       inherited_node_t *mergednode = nullptr;
 
       if (this->canMerge(other)) {
@@ -514,7 +517,7 @@ private:
       std::atomic<int> *slots = this->get_slots();
 
       for (int i = 0; i < num_values; i++) {
-        slot_offsets.emplace_back(slots[i].load(std::memory_order_relaxed));
+        slot_offsets.emplace_back(load_relaxed(slots[i]));
       }
     }
 
@@ -533,7 +536,7 @@ private:
     NODE_DUMP_METHODS
   };
 
-  using leaf_node_t = inherited_node_t<Value, NodeType::LEAF>;
+  using leaf_node_t = inherited_node_t<mapped_type, NodeType::LEAF>;
   using inner_node_t = inherited_node_t<node_t *, NodeType::INNER>;
 
   static_assert((Traits::NODE_SIZE - sizeof(leaf_node_t)) /
@@ -607,14 +610,12 @@ private:
 
     if (node) {
       node->mutex.lock();
-
       state = node->getState();
 
       if (state.is_deleted())
         node->mutex.unlock();
     } else {
       m_root_mutex->lock();
-
       state = m_root_state;
 
       if (state.is_deleted())
@@ -733,20 +734,17 @@ private:
             typename NodeSnaphotType =
                 std::conditional_t<FillSnapshotVector, DummyType, NodeSnapshot>>
   bool traverse_to_leaf(GetChild &&get_child, SnapshotVectorType &snapshots,
-                        NodeSnaphotType &leaf_snapshot) const {
+                        NodeSnaphotType &&leaf_snapshot) const {
     int restart_count = 0;
-    NodeSnapshot parent_snapshot;
-    NodeSnapshot child_snapshot;
-    OpResult opt_traversal_res = OpResult::FAILURE;
+    auto opt_trav_res = OpResult::FAILURE;
 
     do {
-      opt_traversal_res = traverse<OPTIMISTIC_LOCKING, FillSnapshotVector>(
+      opt_trav_res = traverse<OPTIMISTIC_LOCKING, FillSnapshotVector>(
           get_child, snapshots, leaf_snapshot);
       restart_count++;
-    } while (opt_traversal_res != OpResult::SUCCESS &&
-             restart_count < MaxRestarts);
+    } while (opt_trav_res != OpResult::SUCCESS && restart_count < MaxRestarts);
 
-    if (opt_traversal_res != OpResult::SUCCESS) {
+    if (opt_trav_res != OpResult::SUCCESS) {
       auto res = traverse<PESSIMISTIC_LOCKING, FillSnapshotVector>(
           get_child, snapshots, leaf_snapshot);
 
@@ -754,32 +752,30 @@ private:
       BTREE_DEBUG_ONLY(res);
     }
 
-    return opt_traversal_res != OpResult::SUCCESS;
+    return opt_trav_res != OpResult::SUCCESS;
   }
 
   // Root mutex must be held
   inline void store_root(node_t *new_root) {
-    m_root_state.store(m_root_state.load().set_locked(),
-                       std::memory_order_release);
-    m_root.store(new_root, std::memory_order_release);
-    m_root_state.store(m_root_state.load().reset_locked().increment_version(),
-                       std::memory_order_release);
-    m_height.store(m_height.load() + 1, std::memory_order_release);
+    store_release(m_root_state, load_relaxed(m_root_state).set_locked());
+    store_release(m_root, new_root);
+    store_release(
+        m_root_state,
+        load_relaxed(m_root_state).reset_locked().increment_version());
+    store_release(m_height, load_relaxed(m_height) + 1);
   }
 
   // Root mutex must be held
   inline void create_root(NodeSplitInfo splitinfo) {
-    inner_node_t *new_root = inner_node_t::alloc(
-        splitinfo.left->lowkey, splitinfo.right->highkey, m_height + 1);
-
+    auto new_root = inner_node_t::alloc(splitinfo.left->lowkey,
+                                        splitinfo.right->highkey, m_height + 1);
     new_root->insert_neg_infinity(splitinfo.left);
     new_root->append(*splitinfo.split_key, splitinfo.right);
-
     store_root(new_root);
   }
 
   inline bool update_root(nodestate_t rootstate, node_t *new_root) {
-    MutexLockType lock{*m_root_mutex};
+    lock_guard lock{*m_root_mutex};
 
     if (m_root_state.load() != rootstate)
       return false;
@@ -863,7 +859,7 @@ private:
     int lower_bound_pos(const NodeType *node, const KeyType &key,
                         int num_values) const noexcept {
       int firstslot = node->IsLeaf() ? 0 : 1;
-      std::atomic<int> *slots = node->get_slots();
+      auto slots = node->get_slots();
       auto cmp = [this, node](int slot, const KeyType &key) {
         return this->less(node->get_key_value_for_offset(slot)->first, key);
       };
@@ -891,8 +887,8 @@ private:
     std::pair<int, bool> lower_bound(const NodeType *node,
                                      const KeyType &key) const noexcept {
       int num_values = node->num_values;
-      int pos = lower_bound_pos(node, key, num_values);
-      bool present =
+      auto pos = lower_bound_pos(node, key, num_values);
+      auto present =
           pos < num_values && equal(node->get_key_value(pos)->first, key);
 
       return {pos, present};
@@ -906,7 +902,7 @@ private:
 
     node_t *get_value_lower_than(const inner_node_t *inner,
                                  const KeyType &key) const {
-      int pos = search_inner(inner, key);
+      auto pos = search_inner(inner, key);
 
       if (pos == 0)
         return inner->get_first_child();
@@ -922,13 +918,13 @@ private:
     void get_slots_greater_than(const leaf_node_t *leaf, const KeyType &key,
                                 std::vector<int> &slot_offsets) const noexcept {
       int num_values = leaf->num_values;
-      int pos = upper_bound_pos(leaf, key, num_values);
-      std::atomic<int> *slots = leaf->get_slots();
+      auto pos = upper_bound_pos(leaf, key, num_values);
+      auto slots = leaf->get_slots();
 
       slot_offsets.clear();
 
       for (int i = pos; i < num_values; i++) {
-        slot_offsets.emplace_back(slots[i].load(std::memory_order_relaxed));
+        slot_offsets.emplace_back(load_relaxed(slots[i]));
       }
     }
 
@@ -936,39 +932,38 @@ private:
                                    std::vector<int> &slot_offsets) const
         noexcept {
       int num_values = leaf->num_values;
-      int pos = lower_bound_pos(leaf, key, num_values);
-      std::atomic<int> *slots = leaf->get_slots();
+      auto pos = lower_bound_pos(leaf, key, num_values);
+      auto slots = leaf->get_slots();
 
       slot_offsets.clear();
 
       for (int i = pos; i < num_values; i++) {
-        slot_offsets.emplace_back(slots[i].load(std::memory_order_relaxed));
+        slot_offsets.emplace_back(load_relaxed(slots[i]));
       }
     }
 
-    void get_slots_less_than(const leaf_node_t *leaf, const Key &key,
+    void get_slots_less_than(const leaf_node_t *leaf, const key_type &key,
                              std::vector<int> &slot_offsets) const noexcept {
-      std::atomic<int> *slots = leaf->get_slots();
+      auto slots = leaf->get_slots();
       auto [pos, found] = lower_bound(leaf, key);
 
       pos = found ? pos - 1 : pos;
       slot_offsets.clear();
 
       for (int i = 0; i < pos; i++) {
-        slot_offsets.emplace_back(slots[i].load(std::memory_order_relaxed));
+        slot_offsets.emplace_back(load_relaxed(slots[i]));
       }
     }
 
     bool get_leaf_containing(const concurrent_map *map, const KeyType &key,
                              NodeSnapshotVector &snapshots) const {
       static_assert(std::is_same_v<KeyType, key_type>);
-      DummyType dummy;
 
-      bool is_leaf_locked = map->traverse_to_leaf<FILL_SNAPSHOT_VECTOR>(
+      auto is_leaf_locked = map->traverse_to_leaf<FILL_SNAPSHOT_VECTOR>(
           [&](node_t *current) {
             return get_child_for_key(ASINNER(current), key);
           },
-          snapshots, dummy);
+          snapshots, DummyType{});
 
       BTREE_DEBUG_ASSERT(snapshots.size() > 0);
 
@@ -983,7 +978,7 @@ private:
       NodeSnapshot leaf_snapshot{};
       DummyType dummy;
 
-      bool is_leaf_locked = map->traverse_to_leaf<NO_FILL_SNAPSHOT_VECTOR>(
+      auto is_leaf_locked = map->traverse_to_leaf<NO_FILL_SNAPSHOT_VECTOR>(
           [&](node_t *current) {
             return get_child_for_key(ASINNER(current), key);
           },
@@ -1015,16 +1010,16 @@ private:
       return ASLEAF(leaf_snapshot.node);
     }
 
-    leaf_node_t *get_prev_leaf(const concurrent_map *map, const Key &lowkey,
+    leaf_node_t *get_prev_leaf(const concurrent_map *map,
+                               const key_type &lowkey,
                                std::vector<int> &slots) const {
       leaf_node_t *leaf;
-      const Key *key = std::addressof(lowkey);
+      const key_type *key = std::addressof(lowkey);
 
       do {
         NodeSnapshot leaf_snapshot = get_prev_leaf_containing(map, *key);
 
         leaf = ASLEAF(leaf_snapshot.node);
-
         if (leaf) {
           get_slots_less_than(leaf, *key, slots);
 
@@ -1043,7 +1038,6 @@ private:
           }
           break;
         }
-
       } while (leaf);
 
       return leaf;
@@ -1106,7 +1100,7 @@ private:
     }
 
     inline NodeSnapshot get_prev_leaf_containing(const concurrent_map *map,
-                                                 const Key &key) const {
+                                                 const key_type &key) const {
       NodeSnapshot leaf_snapshot{};
       DummyType dummy;
 
@@ -1137,8 +1131,8 @@ private:
 
     // Must be called with this's mutex held
     InsertStatus insert(leaf_node_t *leaf, const key_type &key,
-                        const Value &val) const noexcept {
-      bool key_present = false;
+                        const mapped_type &val) const noexcept {
+      auto key_present = false;
       int pos = 0;
 
       if (leaf->num_values) {
@@ -1152,11 +1146,12 @@ private:
     }
 
     // Must be called with this's mutex held
-    std::pair<InsertStatus, std::optional<Value>>
-    upsert(leaf_node_t *leaf, const Key &key, const Value &val) const noexcept {
-      bool key_present = false;
+    std::pair<InsertStatus, std::optional<mapped_type>>
+    upsert(leaf_node_t *leaf, const key_type &key, const mapped_type &val) const
+        noexcept {
+      auto key_present = false;
       int pos = 0;
-      std::optional<Value> oldval = std::nullopt;
+      std::optional<mapped_type> oldval = std::nullopt;
 
       if (leaf->num_values) {
         std::tie(pos, key_present) = this->lower_bound(leaf, key);
@@ -1177,13 +1172,13 @@ private:
     // Must be called with this's mutex held
     template <typename Node>
     void remove_pos(Node *node, int pos) const noexcept {
-      std::atomic<int> *slots = node->get_slots();
+      auto slots = node->get_slots();
 
       node->atomic_node_update([&]() {
         int num_values = node->num_values;
 
         node->copy(slots, pos + 1, num_values, pos);
-        node->num_values.store(num_values - 1, std::memory_order_release);
+        store_release(node->num_values, num_values - 1);
       });
 
       int next_slot_offset = load_relaxed(node->next_slot_offset) - sizeof(int);
@@ -1196,10 +1191,10 @@ private:
     }
 
     // Must be called with this's mutex held
-    inline std::optional<Value> update_leaf(leaf_node_t *leaf, const Key &key,
-                                            const Value &new_value) const
-        noexcept {
-      std::optional<Value> old_value = std::nullopt;
+    inline std::optional<mapped_type>
+    update_leaf(leaf_node_t *leaf, const key_type &key,
+                const mapped_type &new_value) const noexcept {
+      std::optional<mapped_type> old_value = std::nullopt;
       auto [pos, found] = this->lower_bound(leaf, key);
 
       if (found) {
@@ -1215,13 +1210,11 @@ private:
     }
 
     // Must be called with this's mutex held
-    inline void update_inner_for_trim(inner_node_t *inner, const Key &key,
+    inline void update_inner_for_trim(inner_node_t *inner, const key_type &key,
                                       node_t *child) const noexcept {
-      int pos = this->search_inner(inner, key);
+      auto pos = this->search_inner(inner, key);
       auto oldchild = inner->get_child_ptr(pos);
-
-      inner->atomic_node_update(
-          [&]() { oldchild->store(child, std::memory_order_release); });
+      inner->atomic_node_update([&]() { store_release(*oldchild, child); });
     }
 
     // Must be called with this's mutex held
@@ -1230,7 +1223,7 @@ private:
                            const NodeSplitInfo &splitinfo) const noexcept {
       auto left_child = splitinfo.left;
       auto right_child = splitinfo.right;
-      const Key &split_key = *splitinfo.split_key;
+      auto &split_key = *splitinfo.split_key;
 
       if (inner->haveEnoughSpace()) {
         int split_pos;
@@ -1248,32 +1241,30 @@ private:
             typename inner_node_t::key_value_t{split_key, right_child};
 
         inner->atomic_node_update([&]() {
-          old_child->store(left_child, std::memory_order_release);
+          store_release(*old_child, left_child);
           inner->insert_into_slot(split_pos, current_value_offset);
         });
 
         inner->update_meta_after_insert();
-
         return InsertStatus::INSERTED;
       }
-
       return InsertStatus::OVFLOW;
     }
 
     // Must be called with this's mutex held
     inline void update_inner_for_merge(inner_node_t *inner, int merged_pos,
                                        node_t *merged_child) const noexcept {
-      std::atomic<int> *slots = inner->get_slots();
-      int deleted_pos = merged_pos + 1;
+      auto slots = inner->get_slots();
+      auto deleted_pos = merged_pos + 1;
       auto old_child = inner->get_child_ptr(merged_pos);
 
       inner->atomic_node_update([&]() {
         int num_values = inner->num_values;
 
         inner->copy(slots, deleted_pos + 1, num_values, deleted_pos);
-        inner->num_values.store(num_values - 1, std::memory_order_release);
+        store_release(inner->num_values, num_values - 1);
 
-        old_child->store(merged_child, std::memory_order_release);
+        store_release(*old_child, merged_child);
       });
 
       inner->incrementNumDeadValues();
@@ -1349,13 +1340,13 @@ private:
     inner_node_t *parent = static_cast<inner_node_t *>(parent_snapshot.node);
     NodeSplitInfo splitinfo;
 
-    MutexLockType parentlock{parent ? parent->mutex : *m_root_mutex};
+    lock_guard parentlock{parent ? parent->mutex : *m_root_mutex};
 
     if (is_snapshot_stale(parent_snapshot))
       return {OpResult::STALE_SNAPSHOT, {}};
 
     {
-      MutexLockType lock{node->mutex};
+      lock_guard lock{node->mutex};
 
       if (is_snapshot_stale(node_snapshot))
         return {OpResult::STALE_SNAPSHOT, {}};
@@ -1387,7 +1378,7 @@ private:
 
   template <typename Node>
   std::pair<OpResult, NodeSplitInfo>
-  trim_node(update_ops_t ops, int node_idx, const Key &key,
+  trim_node(update_ops_t ops, int node_idx, const key_type &key,
             const NodeSnapshotVector &snapshots,
             NodeSplitInfo &prev_split_info) {
     const NodeSnapshot &node_snapshot = snapshots[node_idx];
@@ -1396,13 +1387,13 @@ private:
     inner_node_t *parent = static_cast<inner_node_t *>(parent_snapshot.node);
     Node *trimmed_node;
 
-    MutexLockType lock{parent ? parent->mutex : *m_root_mutex};
+    lock_guard lock{parent ? parent->mutex : *m_root_mutex};
 
     if (is_snapshot_stale(parent_snapshot))
       return {OpResult::STALE_SNAPSHOT, {}};
 
     {
-      MutexLockType lock{node->mutex};
+      lock_guard lock{node->mutex};
 
       if (is_snapshot_stale(node_snapshot))
         return {OpResult::STALE_SNAPSHOT, {}};
@@ -1432,30 +1423,32 @@ private:
   }
 
   std::pair<OpResult, NodeSplitInfo>
-  handle_node_overflow(update_ops_t ops, int node_idx, const Key &key,
+  handle_node_overflow(update_ops_t ops, int node_idx, const key_type &key,
                        const NodeSnapshotVector &snapshots,
                        NodeSplitInfo &prev_split_info) {
     node_t *node = snapshots[node_idx].node;
 
     if (node->canTrim()) {
-      if (node->isLeaf())
+      if (node->isLeaf()) {
         return trim_node<leaf_node_t>(ops, node_idx, key, snapshots,
                                       prev_split_info);
-      else
+      } else {
         return trim_node<inner_node_t>(ops, node_idx, key, snapshots,
                                        prev_split_info);
+      }
     } else {
-      if (node->isLeaf())
+      if (node->isLeaf()) {
         return split_node<leaf_node_t>(ops, node_idx, snapshots,
                                        prev_split_info);
-      else
+      } else {
         return split_node<inner_node_t>(ops, node_idx, snapshots,
                                         prev_split_info);
+      }
     }
   }
 
   void handle_overflow(update_ops_t ops, const NodeSnapshotVector &snapshots,
-                       const Key &key) {
+                       const key_type &key) {
     int node_idx = snapshots.size() - 1;
     NodeSplitInfo top_splitinfo{};
     static thread_local std::vector<NodeSplitInfo> failed_splitinfos;
@@ -1502,12 +1495,13 @@ private:
   }
 
   template <bool DoUpsert, typename OutputType = std::conditional_t<
-                               DoUpsert, std::optional<Value>, bool>>
+                               DoUpsert, std::optional<mapped_type>, bool>>
   inline std::pair<OpResult, OutputType>
   insert_or_upsert_leaf(update_ops_t ops, const NodeSnapshotVector &snapshots,
-                        bool is_leaf_locked, const Key &key, const Value &val) {
+                        bool is_leaf_locked, const key_type &key,
+                        const mapped_type &val) {
     InsertStatus status;
-    std::optional<Value> oldval{};
+    std::optional<mapped_type> oldval{};
     NodeSnapshot leaf_snapshot = snapshots.back();
     leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
 
@@ -1524,7 +1518,7 @@ private:
 
       leaf->mutex.unlock();
     } else {
-      MutexLockType lock{leaf->mutex};
+      lock_guard lock{leaf->mutex};
 
       if (is_snapshot_stale(leaf_snapshot))
         return {OpResult::STALE_SNAPSHOT, {}};
@@ -1549,11 +1543,11 @@ private:
       return {OpResult::SUCCESS, status != InsertStatus::DUPLICATE};
   }
 
-  inline std::pair<OpResult, std::optional<Value>>
+  inline std::pair<OpResult, std::optional<mapped_type>>
   update_leaf(update_ops_t ops, const NodeSnapshot &leaf_snapshot,
-              const Key &key, const Value &val) {
+              const key_type &key, const mapped_type &val) {
     leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
-    MutexLockType lock{leaf->mutex};
+    lock_guard lock{leaf->mutex};
 
     if (is_snapshot_stale(leaf_snapshot))
       return {OpResult::STALE_SNAPSHOT, std::nullopt};
@@ -1562,7 +1556,8 @@ private:
   }
 
   template <bool DoUpsert>
-  auto insert_or_upsert(update_ops_t ops, const Key &key, const Value &val) {
+  auto insert_or_upsert(update_ops_t ops, const key_type &key,
+                        const mapped_type &val) {
     static thread_local NodeSnapshotVector snapshots;
 
     snapshots.clear();
@@ -1585,14 +1580,14 @@ private:
   }
 
   struct MergeInfo {
-    const Key &merge_key;
+    const key_type &merge_key;
     int sibilingpos;
   };
 
   template <typename Node>
   std::optional<MergeInfo> get_merge_info(update_ops_t ops, const Node *node,
                                           const inner_node_t *parent,
-                                          const Key &key) const {
+                                          const key_type &key) const {
     int pos = ops.search_inner(parent, key);
 
     if (pos == 0)
@@ -1603,7 +1598,7 @@ private:
 
   template <typename Node>
   void merge_node(update_ops_t ops, int node_idx,
-                  const NodeSnapshotVector &snapshots, const Key &key) {
+                  const NodeSnapshotVector &snapshots, const key_type &key) {
     if (node_idx == 1)
       return;
 
@@ -1616,17 +1611,17 @@ private:
     Node *sibiling = nullptr;
 
     if (mergeinfo) {
-      MutexLockType parent_lock{parent->mutex};
+      lock_guard parent_lock{parent->mutex};
 
       if (is_snapshot_stale(parent_snapshot))
         return;
 
-      const Key &merge_key = mergeinfo->merge_key;
+      const key_type &merge_key = mergeinfo->merge_key;
       int sibilingpos = mergeinfo->sibilingpos;
       sibiling = static_cast<Node *>(parent->get_child(sibilingpos));
 
-      MutexLockType sibiling_lock{sibiling->mutex};
-      MutexLockType node_lock{node->mutex};
+      lock_guard sibiling_lock{sibiling->mutex};
+      lock_guard node_lock{node->mutex};
 
       if (is_snapshot_stale(node_snapshot))
         return;
@@ -1654,12 +1649,12 @@ private:
       merge_node<inner_node_t>(ops, node_idx - 1, snapshots, key);
   }
 
-  std::pair<OpResult, std::optional<Value>>
-  delete_from_leaf(update_ops_t ops, const Key &key, bool is_leaf_locked,
+  std::pair<OpResult, std::optional<mapped_type>>
+  delete_from_leaf(update_ops_t ops, const key_type &key, bool is_leaf_locked,
                    NodeSnapshotVector &snapshots) {
     NodeSnapshot &leaf_snapshot = snapshots.back();
     leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
-    std::pair<OpResult, std::optional<Value>> ret{};
+    std::pair<OpResult, std::optional<mapped_type>> ret{};
 
     {
       bool is_deleted = false;
@@ -1689,7 +1684,7 @@ private:
         do_delete();
         leaf->mutex.unlock();
       } else {
-        MutexLockType lock{leaf->mutex};
+        lock_guard lock{leaf->mutex};
 
         do_delete();
       }
@@ -1742,8 +1737,8 @@ private:
     return leaf_snapshot;
   }
 
-  std::optional<Value> update(update_ops_t ops, const Key &key,
-                              const Value &val) {
+  std::optional<mapped_type> update(update_ops_t ops, const key_type &key,
+                                    const mapped_type &val) {
     while (true) {
       EpochGuard eg(this);
       NodeSnapshot leaf_snapshot = ops.get_leaf_containing(this, key);
@@ -1761,7 +1756,8 @@ private:
   }
 
   template <typename KeyType>
-  std::optional<Value> search(search_ops_t<KeyType> ops, const KeyType &key) {
+  std::optional<mapped_type> search(search_ops_t<KeyType> ops,
+                                    const KeyType &key) {
     while (true) {
       EpochGuard eg(this);
       NodeSnapshot leaf_snapshot = ops.get_leaf_containing(this, key);
@@ -1770,9 +1766,10 @@ private:
         leaf_node_t *leaf = ASLEAF(leaf_snapshot.node);
         auto [pos, key_present] = ops.lower_bound(leaf, key);
 
-        std::optional<Value> val =
-            key_present ? std::optional<Value>{leaf->get_key_value(pos)->second}
-                        : std::nullopt;
+        std::optional<mapped_type> val =
+            key_present
+                ? std::optional<mapped_type>{leaf->get_key_value(pos)->second}
+                : std::nullopt;
 
         if (is_snapshot_stale(leaf_snapshot)) {
           BTREE_UPDATE_STAT(retry, ++);
@@ -1786,7 +1783,7 @@ private:
     };
   }
 
-  std::optional<Value> remove(update_ops_t ops, const Key &key) {
+  std::optional<mapped_type> remove(update_ops_t ops, const key_type &key) {
     static thread_local NodeSnapshotVector snapshots;
 
     snapshots.clear();
@@ -1827,63 +1824,68 @@ public:
   }
 
   DYNAMIC_KEY_ONLY
-  bool Insert(const Key &key, const Value &val, const dynamic_cmp *cmp) {
+  bool Insert(const key_type &key, const mapped_type &val,
+              const dynamic_cmp *cmp) {
     static_assert(is_dynamic == true);
     return insert_or_upsert<DO_INSERT>({cmp, m_stats.get()}, key, val);
   }
 
   STATIC_KEY_ONLY
-  bool Insert(const Key &key, const Value &val) {
+  bool Insert(const key_type &key, const mapped_type &val) {
     static_assert(is_dynamic == false);
     return insert_or_upsert<DO_INSERT>({m_stats.get()}, key, val);
   }
 
   DYNAMIC_KEY_ONLY
-  std::optional<Value> Upsert(const Key &key, const Value &val,
-                              const dynamic_cmp *cmp) {
+  std::optional<mapped_type> Upsert(const key_type &key, const mapped_type &val,
+                                    const dynamic_cmp *cmp) {
     static_assert(is_dynamic == true);
     return insert_or_upsert<DO_UPSERT>({cmp, m_stats.get()}, key, val);
   }
 
   STATIC_KEY_ONLY
-  std::optional<Value> Upsert(const Key &key, const Value &val) {
+  std::optional<mapped_type> Upsert(const key_type &key,
+                                    const mapped_type &val) {
     static_assert(is_dynamic == false);
     return insert_or_upsert<DO_UPSERT>({m_stats.get()}, key, val);
   }
 
   DYNAMIC_KEY_ONLY
-  std::optional<Value> Update(const Key &key, const Value &val,
-                              const dynamic_cmp *cmp) {
+  std::optional<mapped_type> Update(const key_type &key, const mapped_type &val,
+                                    const dynamic_cmp *cmp) {
     static_assert(is_dynamic == true);
     return update({cmp, m_stats.get()}, key, val);
   }
 
   STATIC_KEY_ONLY
-  std::optional<Value> Update(const Key &key, const Value &val) {
+  std::optional<mapped_type> Update(const key_type &key,
+                                    const mapped_type &val) {
     static_assert(is_dynamic == false);
     return update({m_stats.get()}, key, val);
   }
 
   DYNAMIC_KEY_ONLY
-  std::optional<Value> Search(const key_type &key, const dynamic_cmp *cmp) {
+  std::optional<mapped_type> Search(const key_type &key,
+                                    const dynamic_cmp *cmp) {
     static_assert(is_dynamic == true);
     return search({cmp, m_stats.get()}, key);
   }
 
   template <typename KeyType, typename = std::enable_if_t<!is_dynamic>>
-  std::optional<Value> Search(const KeyType &key) {
+  std::optional<mapped_type> Search(const KeyType &key) {
     static_assert(is_dynamic == false);
     return search({m_stats.get()}, key);
   }
 
   DYNAMIC_KEY_ONLY
-  std::optional<Value> Delete(const Key &key, const dynamic_cmp *cmp) {
+  std::optional<mapped_type> Delete(const key_type &key,
+                                    const dynamic_cmp *cmp) {
     static_assert(is_dynamic == true);
     return remove({cmp, m_stats.get()}, key);
   }
 
   STATIC_KEY_ONLY
-  std::optional<Value> Delete(const Key &key) {
+  std::optional<mapped_type> Delete(const key_type &key) {
     static_assert(is_dynamic == false);
     return remove({m_stats.get()}, key);
   }
@@ -1891,10 +1893,10 @@ public:
   template <IteratorType IType> class iterator_impl {
   public:
     // The key type of the btree. Returned by key().
-    using key_type = const Key;
+    using key_type = const key_type;
 
     // The data type of the btree. Returned by data().
-    using data_type = Value;
+    using data_type = mapped_type;
 
     // The pair type of the btree.
     using pair_type = std::pair<key_type, data_type>;
@@ -2046,8 +2048,7 @@ private:
     std::vector<int> slots;
 
     do {
-      NodeSnapshot leaf_snapshot = get_first_leaf();
-
+      auto leaf_snapshot = get_first_leaf();
       leaf = ASLEAF(leaf_snapshot.node);
 
       if (leaf) {
@@ -2079,8 +2080,7 @@ private:
     std::vector<int> slots;
 
     do {
-      NodeSnapshot leaf_snapshot = get_last_leaf();
-
+      auto leaf_snapshot = get_last_leaf();
       leaf = ASLEAF(leaf_snapshot.node);
 
       if (leaf) {
@@ -2115,7 +2115,7 @@ private:
   inline const_iterator lower_bound(const KeyType &key, KeyTypeOps kops,
                                     DefOps ops) const {
     std::vector<int> slots;
-    leaf_node_t *leaf = kops.get_next_leaf(this, key, slots);
+    auto leaf = kops.get_next_leaf(this, key, slots);
 
     return leaf ? const_iterator{ops, this, leaf, std::move(slots), 0} : end();
   }
@@ -2127,8 +2127,7 @@ private:
     leaf_node_t *leaf;
 
     do {
-      NodeSnapshot leaf_snapshot = kops.get_upper_bound_leaf(this, key);
-
+      auto leaf_snapshot = kops.get_upper_bound_leaf(this, key);
       leaf = ASLEAF(leaf_snapshot.node);
 
       if (leaf) {
