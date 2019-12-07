@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <bitset>
+#include <boost/container/small_vector.hpp>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -595,7 +596,10 @@ private:
     nodestate_t state;
   };
 
-  using NodeSnapshotVector = std::vector<NodeSnapshot>;
+  // Store upto `SMALL_HEIGHT` values in stack.
+  static constexpr auto SMALL_HEIGHT = 10;
+  using NodeSnapshotVector =
+      boost::container::small_vector<NodeSnapshot, SMALL_HEIGHT>;
 
   struct DummyType {};
 
@@ -865,7 +869,8 @@ private:
       int firstslot = node->IsLeaf() ? 0 : 1;
       auto slots = node->get_slots();
       auto cmp = [this, node](auto &slot, const KeyType &key) {
-        return this->less(node->get_key_value_for_offset(load_acquire(slot))->first, key);
+        return this->less(
+            node->get_key_value_for_offset(load_acquire(slot))->first, key);
       };
 
       return std::lower_bound(slots + firstslot, slots + num_values, key, cmp) -
@@ -878,7 +883,8 @@ private:
       int firstslot = node->IsLeaf() ? 0 : 1;
       auto slots = node->get_slots();
       auto cmp = [this, node](const KeyType &key, auto &slot) {
-        return this->less(key, node->get_key_value_for_offset(load_acquire(slot))->first);
+        return this->less(
+            key, node->get_key_value_for_offset(load_acquire(slot))->first);
       };
       int pos =
           std::upper_bound(slots + firstslot, slots + num_values, key, cmp) -
@@ -1297,7 +1303,7 @@ private:
   template <typename Update>
   OpResult replace_subtree_on_version_match(const NodeSnapshotVector &snapshots,
                                             int from_node, Update &&update) {
-    static thread_local std::vector<node_t *> deleted_nodes;
+    boost::container::small_vector<node_t *, SMALL_HEIGHT> deleted_nodes;
 
     auto res = [&]() {
       std::vector<std::unique_lock<sync_prim::mutex::Mutex>> locks;
@@ -1330,8 +1336,6 @@ private:
 
     if (res == OpResult::SUCCESS)
       m_gc.retire_in_new_epoch(node_t::free, deleted_nodes);
-
-    deleted_nodes.clear();
 
     return res;
   }
@@ -1458,11 +1462,10 @@ private:
                        const key_type &key) {
     int node_idx = snapshots.size() - 1;
     NodeSplitInfo top_splitinfo{};
-    static thread_local std::vector<NodeSplitInfo> failed_splitinfos;
+    boost::container::small_vector<NodeSplitInfo, SMALL_HEIGHT>
+        failed_splitinfos;
 
-    failed_splitinfos.clear();
-
-    auto free_failed_splits = []() {
+    auto free_failed_splits = [&failed_splitinfos] {
       // Delete allocated nodes
       for (auto splitinfo : failed_splitinfos) {
         if (splitinfo.left)
@@ -1565,11 +1568,9 @@ private:
   template <bool DoUpsert>
   auto insert_or_upsert(update_ops_t ops, const key_type &key,
                         const mapped_type &val) {
-    static thread_local NodeSnapshotVector snapshots;
+    NodeSnapshotVector snapshots;
 
-    snapshots.clear();
     ensure_root();
-
     while (true) {
       EpochGuard eg(this);
       bool is_leaf_locked = ops.get_leaf_containing(this, key, snapshots);
@@ -1791,10 +1792,9 @@ private:
   }
 
   std::optional<mapped_type> remove(update_ops_t ops, const key_type &key) {
-    static thread_local NodeSnapshotVector snapshots;
+    NodeSnapshotVector snapshots;
 
     snapshots.clear();
-
     while (true) {
       EpochGuard eg(this);
       bool is_leaf_locked = ops.get_leaf_containing(this, key, snapshots);

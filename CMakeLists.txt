@@ -44,6 +44,7 @@ include(ProjectFiles.cmake)
 include_directories(AFTER "include")
 
 find_package(Threads)
+find_package(Boost REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 find_package(doctest CONFIG REQUIRED)
@@ -90,7 +91,7 @@ if(BUILD_COVERAGE_ANALYSIS)
 endif(BUILD_COVERAGE_ANALYSIS)
 
 add_library(${LIB} INTERFACE)
-target_include_directories(${LIB} INTERFACE include/)
+target_include_directories(${LIB} INTERFACE include/ ${Boost_INCLUDE_DIRS})
 target_include_directories(${LIB} INTERFACE external/synchronization-primitives/include)
 target_link_libraries(${LIB} INTERFACE sync_primitives)
 
