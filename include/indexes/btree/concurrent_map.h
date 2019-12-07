@@ -169,9 +169,11 @@ private:
 
     inline bool isInner() const { return node_type == NodeType::INNER; }
 
-    inline nodestate_t getState() const { return state; }
+    inline nodestate_t getState() const { return load_acquire(state); }
 
-    inline void setState(nodestate_t new_state) { state = new_state; }
+    inline void setState(nodestate_t new_state) {
+      store_release(state, new_state);
+    }
 
     // We only need to find out if we have more than two deleted values, to trim
     // Called this `this` mutex held
@@ -183,10 +185,11 @@ private:
                                                        : num_dead_values + 1);
     }
 
+    // Called this `this` mutex held
     inline bool isUnderfull() const {
-      BTREE_DEBUG_ASSERT(logical_pagesize <= Traits::NODE_SIZE);
+      BTREE_DEBUG_ASSERT(load_relaxed(logical_pagesize) <= Traits::NODE_SIZE);
 
-      return (logical_pagesize * 100) / Traits::NODE_SIZE <
+      return (load_relaxed(logical_pagesize) * 100) / Traits::NODE_SIZE <
              Traits::NODE_MERGE_THRESHOLD;
     }
 
@@ -320,7 +323,9 @@ private:
     }
 
     INNER_ONLY
-    inline value_t get_first_child() const { return get_child_ptr(0)->load(); }
+    inline value_t get_first_child() const {
+      return load_acquire(*get_child_ptr(0));
+    }
 
     INNER_ONLY
     inline value_t get_last_child() const {
@@ -624,7 +629,7 @@ private:
         node->mutex.unlock();
     } else {
       m_root_mutex->lock();
-      state = m_root_state;
+      state = load_acquire(m_root_state);
 
       if (state.is_deleted())
         m_root_mutex->unlock();
@@ -635,7 +640,7 @@ private:
     int num_tries = 0;
 
     do {
-      state = node ? node->getState() : m_root_state.load();
+      state = node ? node->getState() : load_acquire(m_root_state);
 
       if (!state.is_locked())
         return true;
@@ -670,7 +675,7 @@ private:
       if (node)
         return state != node->getState();
       else
-        return state != m_root_state;
+        return state != load_acquire(m_root_state);
     } else {
       if (node)
         node->mutex.unlock();
@@ -703,7 +708,7 @@ private:
     if constexpr (FillSnapshotVector)
       snapshots.push_back({nullptr, parent_state});
 
-    for (current = m_root; current && current->isInner();) {
+    for (current = load_acquire(m_root); current && current->isInner();) {
       if (lock_node_or_restart<UseOptimisticLocking>(current, current_state) ||
           unlock_node_or_restart<UseOptimisticLocking>(parent, parent_state)) {
         return OpResult::STALE_SNAPSHOT;
@@ -775,8 +780,9 @@ private:
 
   // Root mutex must be held
   inline void create_root(NodeSplitInfo splitinfo) {
-    auto new_root = inner_node_t::alloc(splitinfo.left->lowkey,
-                                        splitinfo.right->highkey, m_height + 1);
+    auto new_root =
+        inner_node_t::alloc(splitinfo.left->lowkey, splitinfo.right->highkey,
+                            load_relaxed(m_height) + 1);
     new_root->insert_neg_infinity(splitinfo.left);
     new_root->append(*splitinfo.split_key, splitinfo.right);
     store_root(new_root);
@@ -785,7 +791,7 @@ private:
   inline bool update_root(nodestate_t rootstate, node_t *new_root) {
     lock_guard lock{*m_root_mutex};
 
-    if (m_root_state.load() != rootstate)
+    if (load_acquire(m_root_state) != rootstate)
       return false;
 
     store_root(new_root);
@@ -794,8 +800,9 @@ private:
   }
 
   inline void ensure_root() {
-    while (m_root == nullptr) {
-      auto new_root = leaf_node_t::alloc(std::nullopt, std::nullopt, m_height);
+    while (load_acquire(m_root) == nullptr) {
+      auto new_root = leaf_node_t::alloc(std::nullopt, std::nullopt,
+                                         load_acquire(m_height));
 
       if (!update_root({}, new_root))
         delete new_root;
@@ -804,7 +811,7 @@ private:
 
   inline bool is_snapshot_stale(const NodeSnapshot &snapshot) const {
     return snapshot.node ? snapshot.node->getState() != snapshot.state
-                         : m_root_state.load() != snapshot.state;
+                         : load_acquire(m_root_state) != snapshot.state;
   }
 
   template <typename KeyT1, typename KeyT2> struct static_cmp {
@@ -1617,6 +1624,7 @@ private:
     std::optional<MergeInfo> mergeinfo = get_merge_info(ops, node, parent, key);
     Node *mergednode = nullptr;
     Node *sibiling = nullptr;
+    bool par_und_full = false;
 
     if (mergeinfo) {
       lock_guard parent_lock{parent->mutex};
@@ -1645,6 +1653,8 @@ private:
             sibiling->getState().set_deleted().increment_version());
         node->setState(node->getState().set_deleted().increment_version());
       }
+
+      par_und_full = parent->isUnderfull();
     }
 
     if (mergednode) {
@@ -1653,7 +1663,7 @@ private:
       m_gc.switch_epoch();
     }
 
-    if (parent->isUnderfull())
+    if (par_und_full)
       merge_node<inner_node_t>(ops, node_idx - 1, snapshots, key);
   }
 
