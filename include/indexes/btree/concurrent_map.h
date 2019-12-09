@@ -526,7 +526,7 @@ private:
       auto slots = this->get_slots();
 
       for (int i = 0; i < num_values; i++) {
-        slot_offsets.emplace_back(load_relaxed(slots[i]));
+        slot_offsets.emplace_back(load_acquire(slots[i]));
       }
     }
 
@@ -586,14 +586,31 @@ private:
   std::atomic<int> m_height = 0;
   std::unique_ptr<Stats> m_stats = std::make_unique<Stats>();
 
-  indexes::utils::EpochManager<uint64_t, node_t> m_gc;
+  mutable indexes::utils::EpochManager<uint64_t, node_t> m_gc;
 
   struct EpochGuard {
-    concurrent_map *map;
+    const concurrent_map *map = nullptr;
 
-    EpochGuard(concurrent_map *a_map) : map(a_map) { map->m_gc.enter_epoch(); }
+    EpochGuard() = default;
+    EpochGuard(const concurrent_map *a_map) : map(a_map) {
+      map->m_gc.enter_epoch();
+    }
+    EpochGuard(const EpochGuard &o) : map(o.map) {
+      if (map)
+        map->m_gc.enter_epoch();
+    }
+    EpochGuard(EpochGuard &&o) : map(std::exchange(o.map, nullptr)) {}
+    ~EpochGuard() {
+      if (map)
+        map->m_gc.exit_epoch();
+    }
 
-    ~EpochGuard() { map->m_gc.exit_epoch(); }
+    void refresh() {
+      if (map) {
+        map->m_gc.exit_epoch();
+        map->m_gc.enter_epoch();
+      }
+    }
   };
 
   struct NodeSnapshot {
@@ -941,7 +958,7 @@ private:
       slot_offsets.clear();
 
       for (int i = pos; i < num_values; i++) {
-        slot_offsets.emplace_back(load_relaxed(slots[i]));
+        slot_offsets.emplace_back(load_acquire(slots[i]));
       }
     }
 
@@ -955,7 +972,7 @@ private:
       slot_offsets.clear();
 
       for (int i = pos; i < num_values; i++) {
-        slot_offsets.emplace_back(load_relaxed(slots[i]));
+        slot_offsets.emplace_back(load_acquire(slots[i]));
       }
     }
 
@@ -968,7 +985,7 @@ private:
       slot_offsets.clear();
 
       for (int i = 0; i < pos; i++) {
-        slot_offsets.emplace_back(load_relaxed(slots[i]));
+        slot_offsets.emplace_back(load_acquire(slots[i]));
       }
     }
 
@@ -1017,11 +1034,20 @@ private:
                                std::vector<int> &slots) const noexcept {
       auto [retry, leaf_snapshot, key] =
           get_next_leaf_util(map, highkey, slots);
-      search_ops_t<key_type> ops = *this;
+      def_search_ops_t ops = *this;
+
+      // `get_next_leaf_util` cannot return PartialKey (KeyType) key.
+      // So loop until, we're done or we obtain a complete key.
+      while (retry && !key) {
+        std::tie(retry, leaf_snapshot, key) =
+            get_next_leaf_util(map, highkey, slots);
+      }
 
       while (retry) {
+        auto old = key;
         std::tie(retry, leaf_snapshot, key) =
             ops.get_next_leaf_util(map, *key, slots);
+        key = key ? key : old;
       }
 
       return ASLEAF(leaf_snapshot.node);
@@ -1907,6 +1933,8 @@ public:
     return remove({m_stats.get()}, key);
   }
 
+  // Used for iterating till end.
+  // XXX: Don't compare two iterators except when one of them is end()
   template <IteratorType IType> class iterator_impl {
   public:
     // The key type of the btree. Returned by key().
@@ -1936,6 +1964,7 @@ public:
   private:
     const def_search_ops_t m_ops;
     const concurrent_map *m_bt;
+    EpochGuard m_eg;
     const leaf_node_t *m_leaf;
     std::vector<int> m_slots;
     int m_curpos = 0;
@@ -1945,8 +1974,9 @@ public:
     void increment() {
       if (++m_curpos >= static_cast<int>(m_slots.size())) {
         if (this->m_leaf->highkey) {
-          m_leaf = ASLEAF(m_ops.get_next_leaf(
-              m_bt, this->m_leaf->highkey.value(), m_slots));
+          auto highkey = *this->m_leaf->highkey;
+          m_eg.refresh();
+          m_leaf = ASLEAF(m_ops.get_next_leaf(m_bt, highkey, m_slots));
           m_curpos = 0;
         } else {
           m_leaf = nullptr;
@@ -1959,8 +1989,9 @@ public:
     void decrement() {
       if (--m_curpos < 0) {
         if (this->m_leaf->lowkey) {
-          m_leaf = ASLEAF(
-              m_ops.get_prev_leaf(m_bt, this->m_leaf->lowkey.value(), m_slots));
+          auto lowkey = *this->m_leaf->lowkey;
+          m_eg.refresh();
+          m_leaf = ASLEAF(m_ops.get_prev_leaf(m_bt, lowkey, m_slots));
           m_curpos = m_leaf ? static_cast<int>(m_slots.size() - 1) : 0;
         } else {
           m_leaf = nullptr;
@@ -1977,23 +2008,24 @@ public:
 
   public:
     inline iterator_impl(def_search_ops_t ops, const concurrent_map *bt,
-                         const leaf_node_t *leaf, std::vector<int> &&slots,
-                         int curpos)
-        : m_ops(ops), m_bt(bt), m_leaf(leaf), m_slots(std::move(slots)),
-          m_curpos(curpos) {}
+                         EpochGuard &&eg, const leaf_node_t *leaf,
+                         std::vector<int> &&slots, int curpos)
+        : m_ops(ops), m_bt(bt), m_eg(std::move(eg)), m_leaf(leaf),
+          m_slots(std::move(slots)), m_curpos(curpos) {}
 
     inline iterator_impl(def_search_ops_t ops, const concurrent_map *bt,
-                         const leaf_node_t *leaf, const std::vector<int> &slots,
-                         int curpos)
-        : m_ops(ops), m_bt(bt), m_leaf(leaf), m_slots(slots), m_curpos(curpos) {
-    }
+                         const EpochGuard &eg, const leaf_node_t *leaf,
+                         const std::vector<int> &slots, int curpos)
+        : m_ops(ops), m_bt(bt), m_eg(eg), m_leaf(leaf), m_slots(slots),
+          m_curpos(curpos) {}
 
     inline iterator_impl(const iterator_impl &it) = default;
+    inline iterator_impl(iterator_impl &&) = default;
 
     template <IteratorType OtherIType>
     inline iterator_impl(const iterator_impl<OtherIType> &it)
-        : iterator_impl(it.m_ops, it.m_bt, it.m_leaf, it.m_slots, it.m_curpos) {
-    }
+        : iterator_impl(it.m_ops, it.m_bt, it.m_eg, it.m_leaf, it.m_slots,
+                        it.m_curpos) {}
 
     inline reference operator*() const { return *get_pair(); }
 
@@ -2063,6 +2095,7 @@ private:
   inline const_iterator cbegin(def_search_ops_t ops) const {
     leaf_node_t *leaf;
     std::vector<int> slots;
+    EpochGuard eg{this};
 
     do {
       auto leaf_snapshot = get_first_leaf();
@@ -2074,16 +2107,23 @@ private:
         if (!is_snapshot_stale(leaf_snapshot))
           break;
       }
+      eg.refresh();
     } while (leaf);
 
     if (leaf && slots.empty())
       leaf = ops.get_next_leaf(this, leaf->highkey.value(), slots);
 
-    return leaf ? const_iterator{ops, this, leaf, std::move(slots), 0} : cend();
+    return leaf ? const_iterator{ops,
+                                 this,
+                                 std::move(eg),
+                                 leaf,
+                                 std::move(slots),
+                                 0}
+                : cend();
   }
 
   inline const_iterator cend(def_search_ops_t ops) const {
-    return {ops, this, nullptr, std::vector<int>{}, 0};
+    return {ops, this, {}, nullptr, std::vector<int>{}, 0};
   }
 
   inline const_iterator begin(def_search_ops_t ops) const {
@@ -2095,6 +2135,7 @@ private:
   inline const_reverse_iterator crbegin(def_search_ops_t ops) const {
     leaf_node_t *leaf;
     std::vector<int> slots;
+    EpochGuard eg{this};
 
     do {
       auto leaf_snapshot = get_last_leaf();
@@ -2106,12 +2147,17 @@ private:
         if (!is_snapshot_stale(leaf_snapshot))
           break;
       }
+      eg.refresh();
     } while (leaf);
 
     if (leaf && slots.empty())
       leaf = ops.get_prev_leaf(this, leaf->lowkey.value(), slots);
 
-    return leaf ? const_reverse_iterator{ops, this, leaf, std::move(slots),
+    return leaf ? const_reverse_iterator{ops,
+                                         this,
+                                         std::move(eg),
+                                         leaf,
+                                         std::move(slots),
                                          static_cast<int>(slots.size() - 1)}
                 : crend(ops);
   }
@@ -2132,9 +2178,16 @@ private:
   inline const_iterator lower_bound(const KeyType &key, KeyTypeOps kops,
                                     DefOps ops) const {
     std::vector<int> slots;
+    EpochGuard eg{this};
     auto leaf = kops.get_next_leaf(this, key, slots);
 
-    return leaf ? const_iterator{ops, this, leaf, std::move(slots), 0} : end();
+    return leaf ? const_iterator{ops,
+                                 this,
+                                 std::move(eg),
+                                 leaf,
+                                 std::move(slots),
+                                 0}
+                : end();
   }
 
   template <typename KeyType, typename KeyTypeOps, typename DefOps>
@@ -2142,6 +2195,7 @@ private:
                                     DefOps ops) const {
     std::vector<int> slots;
     leaf_node_t *leaf;
+    EpochGuard eg{this};
 
     do {
       auto leaf_snapshot = kops.get_upper_bound_leaf(this, key);
@@ -2153,15 +2207,17 @@ private:
         if (!is_snapshot_stale(leaf_snapshot))
           break;
       }
+      eg.refresh();
     } while (leaf);
 
     bool node_empty = slots.empty();
-    auto it = const_iterator{ops, this, leaf, std::move(slots), 0};
+    auto it =
+        const_iterator{ops, this, std::move(eg), leaf, std::move(slots), 0};
 
     if (leaf && node_empty)
       it++;
 
-    return leaf ? it : end({m_stats.get()});
+    return leaf ? std::move(it) : end({m_stats.get()});
   }
 
 public:

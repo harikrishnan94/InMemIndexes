@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/db.h"
+#include "sync_prim/ThreadRegistry.h"
 #include "utils/properties.h"
 
 #include <string>
@@ -10,7 +11,7 @@ namespace ycsbc {
 template <bool ScanSupported, typename MapType>
 class ConcurrentMapDB : public DB {
 public:
-  void Init() {}
+  void Init() { sync_prim::ThreadRegistry::RegisterThread(); }
 
   int Read(const std::string &table, const std::string &key,
            const DB::FieldSet *fields, int field_count,

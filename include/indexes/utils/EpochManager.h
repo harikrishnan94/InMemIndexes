@@ -40,17 +40,26 @@ public:
 
   // enter_epoch guarantees that all shared objects, accessed by the calling
   // thread, after enter_epoch is called are safe.
+  // Recursive calls are allowed
   inline void enter_epoch() {
-    m_local_epoch[ThreadRegistry::ThreadID()].epoch.store(
-        now(), std::memory_order_release);
-    std::atomic_thread_fence(std::memory_order_acquire);
+    auto &pd = m_local_epoch[ThreadRegistry::ThreadID()];
+
+    if (pd.nested_level == 0) {
+      pd.epoch.store(now(), std::memory_order_release);
+      std::atomic_thread_fence(std::memory_order_acquire);
+    }
+    pd.nested_level++;
   }
 
-  // exit_epoch marks quiescent state of the calling thread.
+  // exit_epoch marks quiescent state of the calling thread, when nesting
+  // becomes 0.
   // Enables reclaimation of objects retired before calling thread's epoch.
   inline void exit_epoch() {
-    m_local_epoch[ThreadRegistry::ThreadID()].epoch.store(
-        QUIESCENT_STATE, std::memory_order_release);
+    auto &pd = m_local_epoch[ThreadRegistry::ThreadID()];
+
+    pd.nested_level--;
+    if (pd.nested_level == 0)
+      pd.epoch.store(QUIESCENT_STATE, std::memory_order_release);
   }
 
   // Switch to new epoch and return old epoch
@@ -128,10 +137,7 @@ public:
   EpochManager()
       : m_reclaimation_threshold{ReclamationThreshold}, m_global_epoch{0},
         m_local_epoch(ThreadRegistry::MAX_THREADS),
-        m_retire_list(ThreadRegistry::MAX_THREADS) {
-    for (int i = 0; i < ThreadRegistry::MAX_THREADS; i++)
-      m_local_epoch[i].epoch.store(QUIESCENT_STATE, std::memory_order_relaxed);
-  }
+        m_retire_list(ThreadRegistry::MAX_THREADS) {}
 
   EpochManager(const EpochManager &) = delete;
   EpochManager(EpochManager &&) = delete;
@@ -213,13 +219,14 @@ private:
   static constexpr epoch_t QUIESCENT_STATE =
       std::numeric_limits<epoch_t>::max();
 
-  struct alignas(128) AlignedAtomicEpoch {
-    std::atomic<epoch_t> epoch;
+  struct alignas(128) PrivateData {
+    std::atomic<epoch_t> epoch = QUIESCENT_STATE;
+    int nested_level = 0;
   };
 
   // Thread local epoch, denotes the epoch of each thread.
   // Accessed using `slot` by each thread.
-  std::vector<AlignedAtomicEpoch> m_local_epoch;
+  std::vector<PrivateData> m_local_epoch;
 
   // Thread local retire list. Accessed using `slot` by each thread.
   std::vector<std::deque<Retiree>> m_retire_list;
