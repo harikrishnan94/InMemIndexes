@@ -95,9 +95,10 @@ TEST_CASE("HashMapMixed") {
 
 TEST_CASE("HashMapConcurrencyRandom") {
   ConcurrentMapTest<indexes::hashtable::concurrent_map<
-      int64_t, int64_t, absl::Hash<int64_t>,
-      indexes::hashtable::hashtable_traits_debug>>(
-      ConcurrentMapTestWorkload::WL_RANDOM);
+                        int64_t, int64_t, absl::Hash<int64_t>,
+                        indexes::hashtable::hashtable_traits_debug>,
+                    LookupType::LT_DEFAULT>(
+      ConcurrentMapTestWorkload::WL_RANDOM, [] {});
 }
 
 TEST_SUITE_END();

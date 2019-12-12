@@ -20,7 +20,12 @@ bool less(const compound_key<Order, Types1...> &k1,
   constexpr auto minlen = std::min(sizeof...(Types1), sizeof...(Types2));
 
   if constexpr (Index == minlen) {
-    return false;
+    if constexpr (sizeof...(Types1) == sizeof...(Types2))
+      return false;
+    else if constexpr (sizeof...(Types1) == minlen)
+      return true;
+    else
+      return false;
   } else {
     if (std::get<Index>(k1) < std::get<Index>(k2))
       return true;
@@ -41,9 +46,30 @@ inline bool operator==(const compound_key<Order, Types1...> &x,
     return std::tuple<Types1...>{x} == std::tuple<Types2...>{y};
 }
 template <typename... Types1, int Order, typename... Types2>
+inline bool operator!=(const compound_key<Order, Types1...> &x,
+                       const compound_key<Order, Types2...> &y) {
+  return !(x == y);
+}
+
+template <typename... Types1, int Order, typename... Types2>
 inline bool operator<(const compound_key<Order, Types1...> &x,
                       const compound_key<Order, Types2...> &y) {
   return less<0>(x, y);
+}
+template <typename... Types1, int Order, typename... Types2>
+inline bool operator>(const compound_key<Order, Types1...> &x,
+                      const compound_key<Order, Types2...> &y) {
+  return less<0>(y, x);
+}
+template <typename... Types1, int Order, typename... Types2>
+inline bool operator<=(const compound_key<Order, Types1...> &x,
+                       const compound_key<Order, Types2...> &y) {
+  return !less<0>(y, x);
+}
+template <typename... Types1, int Order, typename... Types2>
+inline bool operator>=(const compound_key<Order, Types1...> &x,
+                       const compound_key<Order, Types2...> &y) {
+  return !less<0>(x, y);
 }
 } // namespace detail
 

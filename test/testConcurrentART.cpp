@@ -58,13 +58,15 @@ TEST_CASE("ConcurrentARTMixed") {
 }
 
 TEST_CASE("ConcurrentARTConcurrencyRandom") {
-  ConcurrentMapTest<indexes::art::concurrent_map<int64_t>>(
-      ConcurrentMapTestWorkload::WL_RANDOM);
+  ConcurrentMapTest<indexes::art::concurrent_map<int64_t>,
+                    LookupType::LT_DEFAULT>(
+      ConcurrentMapTestWorkload::WL_RANDOM, [] {});
 }
 
 TEST_CASE("ConcurrentARTConcurrencyContented") {
-  ConcurrentMapTest<indexes::art::concurrent_map<int64_t>>(
-      ConcurrentMapTestWorkload::WL_CONTENTED_SWAP);
+  ConcurrentMapTest<indexes::art::concurrent_map<int64_t>,
+                    LookupType::LT_DEFAULT>(
+      ConcurrentMapTestWorkload::WL_CONTENTED_SWAP, [] {});
 }
 
 TEST_SUITE_END();

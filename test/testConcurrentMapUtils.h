@@ -17,6 +17,11 @@ enum class ConcurrentMapTestWorkload {
   WL_RANDOM,
 };
 
+enum class LookupType {
+  LT_DEFAULT,
+  LT_CUSTOM,
+};
+
 std::vector<int64_t> generateUniqueValues(int num_threads, int perthread_count,
                                           ConcurrentMapTestWorkload workload);
 
@@ -99,19 +104,25 @@ template <typename MapType> void MixedMapTest() {
   indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
-template <typename MapType>
-static void lookup_worker(MapType &map, gsl::span<int64_t> vals) {
+template <typename MapType, LookupType LkType, typename LookupOp>
+static void lookup_worker(MapType &map, gsl::span<const int64_t> vals,
+                          int64_t min_val, int64_t max_val,
+                          const LookupOp &op) {
   indexes::utils::ThreadRegistry::RegisterThread();
 
-  for (auto val : vals) {
-    map.Search(val);
+  if constexpr (LkType == LookupType::LT_DEFAULT) {
+    (void)op;
+    for (auto val : vals) {
+      map.Search(val);
+    }
+  } else {
+    op(map, min_val, max_val, vals.size());
   }
-
   indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
 template <typename MapType>
-static void insert_worker(MapType &map, gsl::span<int64_t> vals) {
+static void insert_worker(MapType &map, gsl::span<const int64_t> vals) {
   indexes::utils::ThreadRegistry::RegisterThread();
 
   for (auto val : vals) {
@@ -125,7 +136,8 @@ static void insert_worker(MapType &map, gsl::span<int64_t> vals) {
 enum class OpType { INSERT, DELETE, DELETE_AND_INSERT };
 
 template <typename MapType>
-static void delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op) {
+static void delete_worker(MapType &map, gsl::span<const int64_t> vals,
+                          OpType op) {
   indexes::utils::ThreadRegistry::RegisterThread();
 
   for (auto val : vals) {
@@ -148,13 +160,15 @@ static void delete_worker(MapType &map, gsl::span<int64_t> vals, OpType op) {
   indexes::utils::ThreadRegistry::UnregisterThread();
 }
 
-template <typename MapType>
-void ConcurrentMapTest(ConcurrentMapTestWorkload workload) {
+template <typename MapType, LookupType LkType, typename LookupOp>
+void ConcurrentMapTest(ConcurrentMapTestWorkload workload, LookupOp &&lop) {
   MapType map;
   constexpr int PER_THREAD_OP_COUNT = 256 * 1024;
   const int NUM_THREADS = std::thread::hardware_concurrency();
-  std::vector<int64_t> vals =
+  const std::vector<int64_t> vals =
       generateUniqueValues(NUM_THREADS, PER_THREAD_OP_COUNT, workload);
+  auto [min_it, max_it] = std::minmax_element(vals.begin(), vals.begin());
+  int64_t min_val = *min_it, max_val = *max_it;
 
   indexes::utils::ThreadRegistry::RegisterThread();
 
@@ -167,18 +181,19 @@ void ConcurrentMapTest(ConcurrentMapTestWorkload workload) {
       if (op == OpType::INSERT) {
         workers.emplace_back(
             insert_worker<MapType>, std::ref(map),
-            gsl::span<int64_t>{vals.data() + startval, quantum});
+            gsl::span<const int64_t>{vals.data() + startval, quantum});
       } else {
         workers.emplace_back(
             delete_worker<MapType>, std::ref(map),
-            gsl::span<int64_t>{vals.data() + startval, quantum}, op);
+            gsl::span<const int64_t>{vals.data() + startval, quantum}, op);
       }
 
       startval += quantum;
     }
 
-    workers.emplace_back(lookup_worker<MapType>, std::ref(map),
-                         gsl::span<int64_t>{vals});
+    workers.emplace_back(lookup_worker<MapType, LkType, LookupOp>,
+                         std::ref(map), gsl::span<const int64_t>{vals}, min_val,
+                         max_val, std::cref(lop));
 
     for (auto &worker : workers) {
       worker.join();
