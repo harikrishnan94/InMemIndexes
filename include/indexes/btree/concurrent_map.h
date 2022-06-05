@@ -1971,7 +1971,7 @@ protected:
   template <iter_direction IDir> class iterator_impl {
   public:
     // The key type of the btree. Returned by key().
-    using key_type = const key_type;
+    using key_type = std::add_const_t<typename base::key_type>;
 
     // The data type of the btree. Returned by data().
     using data_type = mapped_type;
